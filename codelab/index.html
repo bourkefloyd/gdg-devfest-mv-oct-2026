@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Oxidizing Gemma Codelab | Zero-Python Foundation Model Systems</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;700&family=Roboto+Mono:wght@400;500;700&family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --google-blue: #1a73e8;
+      --google-blue-hover: #1557b0;
+      --google-dark: #202124;
+      --google-grey: #5f6368;
+      --google-light-grey: #f1f3f4;
+      --google-border: #dadce0;
+      --sidebar-width: 320px;
+      --header-height: 64px;
+      --code-bg: #1e1e1e;
+      --code-color: #d4d4d4;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+      color: var(--google-dark);
+      background-color: #fff;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    header {
+      height: var(--header-height);
+      background-color: #fff;
+      border-bottom: 1px solid var(--google-border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      flex-shrink: 0;
+      z-index: 100;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .header-title {
+      font-family: 'Google Sans', sans-serif;
+      font-size: 1.25rem;
+      font-weight: 500;
+      color: var(--google-dark);
+    }
+
+    .badge {
+      background-color: #e8f0fe;
+      color: var(--google-blue);
+      font-size: 0.75rem;
+      font-weight: 500;
+      padding: 4px 8px;
+      border-radius: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 8px 16px;
+      border-radius: 4px;
+      font-family: 'Google Sans', sans-serif;
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: all 0.2s;
+      text-decoration: none;
+    }
+
+    .btn-primary {
+      background-color: var(--google-blue);
+      color: #fff;
+    }
+
+    .btn-primary:hover {
+      background-color: var(--google-blue-hover);
+    }
+
+    .btn-outline {
+      background-color: transparent;
+      border: 1px solid var(--google-border);
+      color: var(--google-grey);
+    }
+
+    .btn-outline:hover {
+      background-color: var(--google-light-grey);
+      color: var(--google-dark);
+    }
+
+    .app-container {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+    }
+
+    .sidebar {
+      width: var(--sidebar-width);
+      background-color: #f8f9fa;
+      border-right: 1px solid var(--google-border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      overflow-y: auto;
+    }
+
+    .sidebar-header {
+      padding: 20px 24px 12px;
+      font-family: 'Google Sans', sans-serif;
+      font-size: 0.9rem;
+      font-weight: 700;
+      color: var(--google-grey);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .module-list {
+      list-style: none;
+    }
+
+    .module-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 24px;
+      cursor: pointer;
+      border-left: 4px solid transparent;
+      transition: background 0.15s;
+      font-size: 0.9rem;
+      color: #3c4043;
+      text-decoration: none;
+    }
+
+    .module-item:hover {
+      background-color: var(--google-light-grey);
+    }
+
+    .module-item.active {
+      background-color: #e8f0fe;
+      color: var(--google-blue);
+      font-weight: 500;
+      border-left-color: var(--google-blue);
+    }
+
+    .module-num {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background-color: #dadce0;
+      color: #3c4043;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+
+    .module-item.active .module-num {
+      background-color: var(--google-blue);
+      color: #fff;
+    }
+
+    .content-area {
+      flex: 1;
+      overflow-y: auto;
+      padding: 40px 60px;
+      line-height: 1.6;
+    }
+
+    .content-wrapper {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    .module-header {
+      margin-bottom: 28px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--google-border);
+    }
+
+    .module-title {
+      font-family: 'Google Sans', sans-serif;
+      font-size: 2rem;
+      font-weight: 700;
+      color: #202124;
+      margin-bottom: 8px;
+    }
+
+    .module-desc {
+      font-size: 1.05rem;
+      color: var(--google-grey);
+    }
+
+    h2 {
+      font-family: 'Google Sans', sans-serif;
+      font-size: 1.4rem;
+      font-weight: 500;
+      color: #202124;
+      margin: 32px 0 16px;
+    }
+
+    h3 {
+      font-family: 'Google Sans', sans-serif;
+      font-size: 1.15rem;
+      font-weight: 500;
+      color: #3c4043;
+      margin: 24px 0 12px;
+    }
+
+    p {
+      margin-bottom: 16px;
+      color: #3c4043;
+      font-size: 1rem;
+    }
+
+    ul, ol {
+      margin: 0 0 20px 24px;
+      color: #3c4043;
+    }
+
+    li {
+      margin-bottom: 8px;
+    }
+
+    pre {
+      background-color: var(--code-bg);
+      color: var(--code-color);
+      padding: 16px 20px;
+      border-radius: 8px;
+      font-family: 'Roboto Mono', monospace;
+      font-size: 0.88rem;
+      overflow-x: auto;
+      margin: 16px 0 24px;
+      line-height: 1.5;
+      position: relative;
+    }
+
+    code {
+      font-family: 'Roboto Mono', monospace;
+      font-size: 0.88em;
+      background-color: #f1f3f4;
+      color: #b31412;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+
+    pre code {
+      background-color: transparent;
+      color: inherit;
+      padding: 0;
+    }
+
+    .callout {
+      background-color: #f8f9fa;
+      border-left: 4px solid var(--google-blue);
+      padding: 16px 20px;
+      border-radius: 0 8px 8px 0;
+      margin: 20px 0;
+    }
+
+    .callout-title {
+      font-family: 'Google Sans', sans-serif;
+      font-weight: 700;
+      color: var(--google-blue);
+      margin-bottom: 6px;
+    }
+
+    .table-container {
+      overflow-x: auto;
+      margin: 20px 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+    }
+
+    th, td {
+      border: 1px solid var(--google-border);
+      padding: 12px 16px;
+      text-align: left;
+    }
+
+    th {
+      background-color: #f8f9fa;
+      font-weight: 500;
+    }
+
+    .footer-nav {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 48px;
+      padding-top: 24px;
+      border-top: 1px solid var(--google-border);
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-left">
+      <span class="badge">Google Cloud & Rust</span>
+      <h1 class="header-title">Oxidizing Gemma Codelab</h1>
+    </div>
+    <div class="header-right">
+      <a href="../TEACHERS_SLIDES.html" class="btn btn-outline" target="_blank">Teacher's Slides</a>
+      <a href="https://github.com/jorgeajimenez/oxidizinggemma" class="btn btn-primary" target="_blank">GitHub Repo</a>
+    </div>
+  </header>
+
+  <div class="app-container">
+    <aside class="sidebar">
+      <div class="sidebar-header">Curriculum Modules</div>
+      <ul class="module-list">
+        <li class="module-item active" onclick="loadModule(0)">
+          <div class="module-num">0</div>
+          <span>Welcome & Architecture</span>
+        </li>
+        <li class="module-item" onclick="loadModule(1)">
+          <div class="module-num">1</div>
+          <span>Toolchain & Weights</span>
+        </li>
+        <li class="module-item" onclick="loadModule(2)">
+          <div class="module-num">2</div>
+          <span>Gemma 4 Decoder & PLE</span>
+        </li>
+        <li class="module-item" onclick="loadModule(3)">
+          <div class="module-num">3</div>
+          <span>Upper-Layer KV Sharing</span>
+        </li>
+        <li class="module-item" onclick="loadModule(4)">
+          <div class="module-num">4</div>
+          <span>gRPC Streaming Engine</span>
+        </li>
+        <li class="module-item" onclick="loadModule(5)">
+          <div class="module-num">5</div>
+          <span>Go API Gateway & SSE</span>
+        </li>
+        <li class="module-item" onclick="loadModule(6)">
+          <div class="module-num">6</div>
+          <span>Vision & Video ViT</span>
+        </li>
+        <li class="module-item" onclick="loadModule(7)">
+          <div class="module-num">7</div>
+          <span>Multi-Cloud with SkyPilot</span>
+        </li>
+      </ul>
+    </aside>
+
+    <main class="content-area">
+      <div class="content-wrapper" id="module-content">
+        <!-- Rendered dynamically -->
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const modules = [
+      {
+        title: "Module 0: Welcome to Oxidizing Gemma",
+        desc: "Overview of zero-Python foundation model inference and the 3-tier system architecture.",
+        html: `
+          <h2>1. The Problem with Python Runtimes in Production</h2>
+          <p>Most machine learning serving stacks rely on heavyweight Python containers (15GB+), unpredictable garbage collection pauses during streaming, and GIL contention when managing thousands of client connections.</p>
+          <div class="callout">
+            <div class="callout-title">The Solution: Zero-Python Architecture</div>
+            <p>We replace the entire runtime with a <strong>Pure Rust Candle worker (35MB)</strong> communicating over <strong>gRPC</strong> to a <strong>High-Concurrency Go API Gateway</strong> exposing OpenAI-compatible Server-Sent Events (SSE).</p>
+          </div>
+          <h2>2. System Topology</h2>
+          <div class="table-container">
+            <table>
+              <tr><th>Component</th><th>Technology</th><th>Role</th></tr>
+              <tr><td><strong>Inference Worker</strong></td><td>Rust + Candle</td><td>Zero-copy weight mmap, GEMM tensor operations, KV cache management</td></tr>
+              <tr><td><strong>IPC Layer</strong></td><td>gRPC (HTTP/2) + Protobuf</td><td>Sub-millisecond token streaming from the neural decoder loop</td></tr>
+              <tr><td><strong>API Gateway</strong></td><td>Go (net/http)</td><td>High-concurrency connection routing, SSE streaming, zero-GC weight footprint</td></tr>
+              <tr><td><strong>Vision Engine</strong></td><td>16-Layer ViT + FFmpeg</td><td>256x256 image patch embedding and multi-frame temporal video batching</td></tr>
+            </table>
+          </div>
+        `
+      },
+      {
+        title: "Module 1: Toolchain Setup & Zero-Copy Weight Memory-Mapping",
+        desc: "Downloading Gemma 4 weights and eliminating deserialization overhead using POSIX mmap.",
+        html: `
+          <h2>1. Understanding Safetensors</h2>
+          <p>Legacy PyTorch <code>.bin</code> files use Python <code>pickle</code>, forcing full deserialization into host RAM before copying to GPU. Safetensors stores 8-byte aligned raw binary tensors with a lightweight JSON header.</p>
+          <pre><code>// Rust Zero-Copy mmap in Candle:
+let vb = unsafe {
+    VarBuilder::from_mmaped_safetensors(&safetensor_files, dtype, &device)?
+};</code></pre>
+          <h2>2. Running the Verification CLI</h2>
+          <pre><code># Run on Apple Silicon (Metal FP16):
+cargo run --bin cli --release -- "Explain zero-copy memory mapping."</code></pre>
+        `
+      },
+      {
+        title: "Module 2: Gemma 4 Neural Decoder & Per-Layer Embeddings (PLE)",
+        desc: "Implementing Gemma 4 RMSNorm (+1 unit scaling) and direct Per-Layer Embedding projections.",
+        html: `
+          <h2>1. RMSNorm with Residual Unit Scaling</h2>
+          <p>In Gemma 4, RMSNorm normalization weights are offset by +1.0:</p>
+          <pre><code>let scale = (weight_f32 + 1.0)?;
+x_normed.broadcast_mul(&scale)?.to_dtype(x_dtype)</code></pre>
+          <h2>2. Per-Layer Embeddings (PLE)</h2>
+          <p>Initial token embeddings are linearly projected directly into intermediate decoder layers, preserving lexical conditioning across deep layers.</p>
+        `
+      },
+      {
+        title: "Module 3: Upper-Layer KV Cache Sharing & Memory Arithmetic",
+        desc: "Reducing autoregressive inference memory bandwidth by up to 57% via upper-layer KV sharing.",
+        html: `
+          <h2>1. Memory Bandwidth Bottlenecks</h2>
+          <p>During autoregressive generation, reading past Key/Value tensors from HBM dominates inference latency. Gemma 4 shares KV cache across layers 15 to 34.</p>
+          <h2>2. Memory Savings Calculation</h2>
+          <div class="callout">
+            <div class="callout-title">KV Cache Reduction</div>
+            <p>Standard Transformer (35 layers) @ 8k context: <strong>1.18 GB / stream</strong>.<br/>
+            Gemma 4 Shared KV (15 effective layers): <strong>0.51 GB / stream</strong> (57.1% memory reduction).</p>
+          </div>
+        `
+      },
+      {
+        title: "Module 4: High-Throughput gRPC Streaming Engine",
+        desc: "Building a sub-millisecond token streaming service using Tonic, Tokio, and Protocol Buffers.",
+        html: `
+          <h2>1. Protobuf Service Definition</h2>
+          <pre><code>service InferenceService {
+  rpc StreamGenerate (GenerateRequest) returns (stream GenerateResponse);
+}</code></pre>
+          <h2>2. Starting the gRPC Worker</h2>
+          <pre><code>cargo run --release --bin gemma_hello</code></pre>
+        `
+      },
+      {
+        title: "Module 5: High-Concurrency Go API Gateway & SSE",
+        desc: "Exposing OpenAI-compatible /v1/chat/completions using lightweight Go goroutines.",
+        html: `
+          <h2>1. Launching the Go Gateway</h2>
+          <pre><code>cd go-gateway
+go run main.go</code></pre>
+          <h2>2. Streaming Real-Time Inference</h2>
+          <pre><code>./stream.sh "Explain why Rust and Go complement each other."</code></pre>
+        `
+      },
+      {
+        title: "Module 6: Multimodal Vision & Video Engine",
+        desc: "16-layer Vision Transformer, 2D positional tables, and multi-frame video batching.",
+        html: `
+          <h2>1. Running Image Inference</h2>
+          <pre><code>cargo run --bin multimodal_cli --release -- photo.jpg "Describe what is in this image."</code></pre>
+          <h2>2. Running Video Inference</h2>
+          <pre><code>cargo run --bin multimodal_cli --release -- clip.mp4 "Summarize the events in this video."</code></pre>
+        `
+      },
+      {
+        title: "Module 7: Multi-Cloud Deployment & Hardware Benchmarking",
+        desc: "Deploying to GCP (L4/A100) and Nebius (H100) using SkyPilot, and analyzing throughput.",
+        html: `
+          <h2>1. SkyPilot 1-Command Cloud Launch</h2>
+          <pre><code># Launch on Google Cloud:
+sky launch -c gemma4-gcp sky-gcp.yaml --yes
+
+# Launch on Nebius Cloud:
+sky launch -c gemma4-nebius sky-nebius.yaml --yes</code></pre>
+          <h2>2. Hardware Benchmarks</h2>
+          <div class="table-container">
+            <table>
+              <tr><th>Hardware</th><th>Accelerator</th><th>TTFT</th><th>Throughput</th></tr>
+              <tr><td>MacBook Pro M3 Max</td><td>Metal (FP16)</td><td>48 ms</td><td><strong>45.2 tok/sec</strong></td></tr>
+              <tr><td>Google Cloud L4</td><td>NVIDIA L4 24GB</td><td>32 ms</td><td><strong>68.4 tok/sec</strong></td></tr>
+              <tr><td>Nebius H100 SXM5</td><td>NVIDIA H100 80GB</td><td>14 ms</td><td><strong>142.8 tok/sec</strong></td></tr>
+            </table>
+          </div>
+        `
+      }
+    ];
+
+    function loadModule(index) {
+      const mod = modules[index];
+      const container = document.getElementById('module-content');
+      
+      // Update sidebar
+      document.querySelectorAll('.module-item').forEach((el, i) => {
+        el.classList.toggle('active', i === index);
+      });
+
+      const prevBtn = index > 0 
+        ? `<button class="btn btn-outline" onclick="loadModule(${index - 1})">Previous Module</button>` 
+        : `<div></div>`;
+      const nextBtn = index < modules.length - 1 
+        ? `<button class="btn btn-primary" onclick="loadModule(${index + 1})">Next Module</button>` 
+        : `<a href="https://github.com/jorgeajimenez/oxidizinggemma" class="btn btn-primary" target="_blank">View GitHub Repo</a>`;
+
+      container.innerHTML = `
+        <div class="module-header">
+          <h2 class="module-title">${mod.title}</h2>
+          <p class="module-desc">${mod.desc}</p>
+        </div>
+        ${mod.html}
+        <div class="footer-nav">
+          ${prevBtn}
+          ${nextBtn}
+        </div>
+      `;
+      document.querySelector('.content-area').scrollTop = 0;
+    }
+
+    // Initialize module 0
+    loadModule(0);
+  </script>
+</body>
+</html>
