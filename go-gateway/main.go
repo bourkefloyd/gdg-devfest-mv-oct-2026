@@ -90,6 +90,10 @@ func main() {
 		return st.Healthy > 0 || geminiReady(), d
 	}
 	srv := api.New(cfg)
+	arenaHandler := newArenaHandler()
+	srv.MountPublic("/api/arena/", arenaHandler)
+	srv.MountPublic("/api/arena", arenaHandler)
+	srv.MountPublic("GET /", newArenaWebHandler())
 
 	addr := net.JoinHostPort(env("HOST", "127.0.0.1"), env("PORT", "8787"))
 	httpServer := &http.Server{
