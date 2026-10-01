@@ -49,6 +49,9 @@ The 2 s ramp, 3 s hold, and 2 s ramp-down intentionally put all 1,000 games in
 flight while measuring admission and validation throughput. Game completion is
 measured separately in S2 rather than folded into S1 request latency.
 
+A self-contained [S1 k6 HTML dashboard](S1_LOAD_DASHBOARD.html) captures a
+representative 1,000-VU run on the merged gateway.
+
 ## S4 notes
 
 The normal key's create p95 improved from 0.637 ms at baseline to 0.378 ms
