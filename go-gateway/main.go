@@ -91,8 +91,10 @@ func main() {
 	}
 	srv := api.New(cfg)
 	arenaHandler := newArenaHandler()
-	srv.MountPublic("/api/arena/", arenaHandler)
-	srv.MountPublic("/api/arena", arenaHandler)
+	srv.MountPublic("POST /api/arena/runs", arenaHandler)
+	srv.MountPublic("GET /api/arena/runs/{id}", arenaHandler)
+	srv.MountPublic("GET /api/arena/runs/{id}/events", arenaHandler)
+	srv.MountPublic("POST /api/arena/runs/{id}/cancel", arenaHandler)
 	srv.MountPublic("GET /", newArenaWebHandler())
 
 	addr := net.JoinHostPort(env("HOST", "127.0.0.1"), env("PORT", "8787"))
