@@ -1,12 +1,12 @@
 # Load test results
 
-Status: in progress. The mock-worker benchmark is green; gateway and real-model
-rows will be filled after the other tracks land the game API and the Gemma
-weights finish downloading.
+Status: in progress. S1 and mock-worker scaling are green. Real-model rows will
+be filled after the Gemma weights finish downloading.
 
 ## Test environment
 
-- Commit: `4893f35` (`track-e`)
+- Load harness: `631d683` (`track-e`)
+- S1 gateway candidate: `3e5cccf` (`track-c`, tests green before the run)
 - Host: MacBook Pro (Mac17,7), Apple M5 Max, 64 GB RAM
 - Go: 1.27.1 (`darwin/arm64`)
 - Rust: 1.99.0
@@ -19,7 +19,7 @@ weights finish downloading.
 
 | Scenario | Load | Throughput | Latency / errors | Result |
 |---|---:|---:|---|---|
-| S1 gateway capacity | pending game API | — | — | pending |
+| S1 gateway capacity | 1,000 VUs, 21,000 requests/run | 2,798 req/s median; ~8,000 games/min | create p50/p95/p99 0.279/0.598/1.073 ms; submit 0.125/0.333/0.671 ms; 0 unexpected errors | pass |
 | S2 real hybrid | pending model integration | — | — | pending |
 | S3 mock worker pool | 1 worker, 40 calls | 9.82 req/s | 4.072 s wall time | baseline |
 | S3 mock worker pool | 2 workers, 80 calls | 19.65 req/s | 4.071 s wall time | 2.00x baseline |
@@ -34,6 +34,19 @@ xychart-beta
     y-axis "Requests per second" 0 --> 45
     line [9.82, 19.65, 39.31]
 ```
+
+## S1 notes
+
+S1 ran three times against the pushed Track C gateway candidate with
+`PLAYERS=mock`, 2 s mock latency, 1,000 distinct configured API keys, and one
+game per VU. The table reports the median of the three runs. Each run admitted
+1,000 games and issued 20 mixed word submissions per game. Of 21,000 requests,
+4,000 (19.05%) were expected 400 responses for malformed or malicious inputs;
+unexpected errors were zero. All encoded thresholds passed by wide margins.
+
+The 2 s ramp, 3 s hold, and 2 s ramp-down intentionally put all 1,000 games in
+flight while measuring admission and validation throughput. Game completion is
+measured separately in S2 rather than folded into S1 request latency.
 
 ## Interpretation
 

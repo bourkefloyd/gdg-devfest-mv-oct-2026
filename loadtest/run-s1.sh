@@ -26,7 +26,7 @@ wanted = {
     "game_create_duration": ("med", "p(95)", "p(99)"),
     "word_submit_duration": ("med", "p(95)", "p(99)"),
     "http_reqs": ("rate", "count"),
-    "unexpected_error": ("rate",),
+    "unexpected_error": ("rate", "value"),
     "expected_4xx": ("count", "rate"),
 }
 result = {}
