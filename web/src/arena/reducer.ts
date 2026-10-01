@@ -14,7 +14,7 @@ export const initialArenaState: ArenaState = {
   status: "idle",
   connection: "idle",
   games: [],
-  stats: { running: 0, wordsPerSecond: 0, p50LatencyMs: 0, p95LatencyMs: 0, errors: 0 },
+  stats: { running: 0, wordsPerSecond: 0, p50LatencyMs: 0, p95LatencyMs: 0, errors: 0, retries: 0 },
 };
 
 export function arenaReducer(state: ArenaState, action: ArenaAction): ArenaState {
@@ -103,7 +103,10 @@ function reduceServerEvent(state: ArenaState, event: NormalizedArenaEvent): Aren
     return updateGame(state, payload, (game) => hydrateGame(game, payload));
   }
   if (["game_finished", "game_complete", "game_result"].includes(type)) {
-    return updateGame(state, payload, (game) => ({ ...hydrateGame(game, payload), status: "finished", currentWord: "" }));
+    return updateGame(state, payload, (game) => {
+      const hydrated = hydrateGame(game, payload);
+      return { ...hydrated, status: hydrated.error ? "error" : "finished", currentWord: "" };
+    });
   }
   if (["game_error", "failed"].includes(type)) {
     const next = updateGame(state, payload, (game) => ({ ...hydrateGame(game, payload), status: "error", error: text(payload.error) ?? text(payload.message) ?? "Game failed" }));
@@ -168,6 +171,9 @@ function hydrateGame(game: ArenaGame, payload: Record<string, unknown>): ArenaGa
     latencyMs: number(payload.latency_ms ?? payload.latency ?? payload.duration_ms) ?? game.latencyMs,
     timeToScoreMs: number(payload.time_to_score_ms) ?? game.timeToScoreMs,
     perfectScore: number(payload.perfect_score) ?? game.perfectScore,
+    profile: text(payload.profile) ?? game.profile,
+    retries: number(payload.retries) ?? game.retries,
+    error: text(payload.error) ?? game.error,
     elapsedMs: number(payload.elapsed_ms ?? payload.elapsed) ?? game.elapsedMs,
     durationMs: number(payload.duration_ms ?? payload.time_limit_ms) ?? game.durationMs,
     currentWord: text(payload.current_word ?? payload.word) ?? game.currentWord,
@@ -182,6 +188,7 @@ function statsFrom(payload: Record<string, unknown>, fallback: ArenaState["stats
     p50LatencyMs: number(payload.p50_latency_ms ?? payload.p50_ms ?? payload.p50) ?? fallback.p50LatencyMs,
     p95LatencyMs: number(payload.p95_latency_ms ?? payload.p95_ms ?? payload.p95) ?? fallback.p95LatencyMs,
     errors: number(payload.errors ?? payload.error_count) ?? fallback.errors,
+    retries: number(payload.retries) ?? fallback.retries,
   };
 }
 
@@ -196,6 +203,7 @@ function deriveStats(games: ArenaGame[], state: ArenaState): ArenaState["stats"]
     p50LatencyMs: percentile(latencies, 0.5) ?? state.stats.p50LatencyMs,
     p95LatencyMs: percentile(latencies, 0.95) ?? state.stats.p95LatencyMs,
     errors: games.filter((game) => game.status === "error").length,
+    retries: games.reduce((sum, game) => sum + game.retries, 0),
   };
 }
 
@@ -209,6 +217,7 @@ function queuedGame(index: number): ArenaGame {
     backend: "—",
     score: 0,
     perfectScore: 0,
+    retries: 0,
     words: 0,
     elapsedMs: 0,
     currentWord: "",

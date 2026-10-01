@@ -9,12 +9,10 @@ import type { ArenaGame, ArenaState } from "./types";
 
 const SWIPE_COLORS = ["#ff5e73", "#5eead4", "#facc15", "#c084fc", "#60a5fa", "#fb923c", "#f472b6", "#a3e635"];
 const PREVIEW_BOARD = "STARNETOLOIDMEPC".split("");
-type PlayerMix = "bots" | "gemini" | "mixed";
 
 function App() {
   const [state, dispatch] = useReducer(arenaReducer, initialArenaState);
   const [count, setCount] = useState(24);
-  const [playerMix, setPlayerMix] = useState<PlayerMix>("mixed");
   const [duration, setDuration] = useState<10 | 30>(() => new URLSearchParams(window.location.search).get("duration") === "30" ? 30 : 10);
   const [seedInput, setSeedInput] = useState(() => new URLSearchParams(window.location.search).get("seed") ?? "");
   const [runSeed, setRunSeed] = useState<number>();
@@ -49,7 +47,7 @@ function App() {
     setCount(safeCount);
     dispatch({ type: "start", count: safeCount });
     try {
-      const result = await createRun(safeCount, playerMix, duration, requestedSeed, controller.signal);
+      const result = await createRun(safeCount, "mixed", duration, requestedSeed, controller.signal);
       if (controller.signal.aborted) return;
       setRunSeed(result.seed);
       setSharedTiles(result.tiles);
@@ -63,7 +61,7 @@ function App() {
     } catch (error) {
       if (!controller.signal.aborted) dispatch({ type: "failure", message: error instanceof Error ? error.message : "Unable to start arena" });
     }
-  }, [count, duration, playerMix, seedInput]);
+  }, [count, duration, seedInput]);
 
   useEffect(() => {
     if (autoStarted.current || new URLSearchParams(window.location.search).get("autostart") !== "24") return;
@@ -107,13 +105,6 @@ function App() {
               <button type="button" onClick={() => setCount((value) => Math.min(100, value + 1))} disabled={busy}>+</button>
             </div>
           </div>
-          <label className="launch-field">Players
-            <select value={playerMix} disabled={busy} onChange={(event) => setPlayerMix(event.target.value as PlayerMix)}>
-              <option value="mixed">Mixed models</option>
-              <option value="gemini">Gemini + agents</option>
-              <option value="bots">Solver bots</option>
-            </select>
-          </label>
           <label className="launch-field">Round
             <select value={duration} disabled={busy} onChange={(event) => setDuration(Number(event.target.value) as 10 | 30)}>
               <option value={10}>10s test</option>
@@ -134,7 +125,7 @@ function App() {
               <Play fill="currentColor" size={18} /> Load test
             </button>
           )}
-          <span className="cap-note">Real seats capped server-side · bots fill the rest</span>
+          <span className="cap-note">10% Gemini agent · 30% baseline · 30% diffusion · 30% diffusion JEV</span>
         </div>
       </section>
 
@@ -175,6 +166,7 @@ function Stats({ state }: { state: ArenaState }) {
     { label: "Words / sec", value: state.stats.wordsPerSecond.toFixed(1), detail: "verified", icon: Gauge },
     { label: "p50 latency", value: formatLatency(state.stats.p50LatencyMs), detail: "median", icon: Clock3 },
     { label: "p95 latency", value: formatLatency(state.stats.p95LatencyMs), detail: "tail", icon: Clock3 },
+    { label: "Retries", value: state.stats.retries.toString(), detail: "same model", icon: RotateCcw },
     { label: "Errors", value: state.stats.errors.toString(), detail: state.stats.errors ? "needs review" : "all clear", icon: AlertTriangle },
   ];
   return (
@@ -245,6 +237,12 @@ function GameBoard({ game, now, runStartedAt, preview }: { game: ArenaGame; now:
 
 function Results({ state, onClose, onRestart, onNewBoard }: { state: ArenaState; onClose: () => void; onRestart: () => void; onNewBoard: () => void }) {
   const ranked = [...state.games].sort((a, b) => b.score - a.score || (a.timeToScoreMs ?? Infinity) - (b.timeToScoreMs ?? Infinity));
+  const groups = Object.values(ranked.reduce<Record<string, { name: string; games: number; score: number; words: number; latency: number; errors: number }>>((all, game) => {
+    const name = game.profile ?? "Unknown profile";
+    const group = all[name] ??= { name, games: 0, score: 0, words: 0, latency: 0, errors: 0 };
+    group.games++; group.score += game.score; group.words += game.words; group.latency += game.latencyMs ?? 0; group.errors += game.error ? 1 : 0;
+    return all;
+  }, {}));
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="results-title">
       <section className="results-panel">
@@ -253,13 +251,16 @@ function Results({ state, onClose, onRestart, onNewBoard }: { state: ArenaState;
           <div><span>Run complete</span><h2 id="results-title">Arena leaderboard</h2><p>{state.games.length} games · {state.games.reduce((sum, game) => sum + game.words, 0)} verified words</p></div>
           <button className="close" onClick={onClose} aria-label="Close results"><X size={20} /></button>
         </div>
+        <div className="profile-groups">
+          {groups.map((group) => <div key={group.name}><strong>{group.name}</strong><span>avg {Math.round(group.score / group.games).toLocaleString()} pts · {(group.words / group.games).toFixed(1)} words · {formatLatency(group.latency / group.games)} · {group.errors} errors</span></div>)}
+        </div>
         <div className="leaderboard-head"><span>Rank / agent</span><span>Model / backend</span><span>Score / perfect</span><span>Words</span><span>Time</span></div>
         <div className="leaderboard">
           {ranked.map((game, index) => (
             <div className="leader-row" key={game.id}>
               <div><b>{index + 1}</b><span className="agent-dot" style={{ background: SWIPE_COLORS[game.ordinal % SWIPE_COLORS.length] }} /><strong>{game.name}</strong></div>
-              <div><strong>{game.model}</strong><small>{game.backend}</small></div>
-              <strong>{game.score.toLocaleString()} / {game.perfectScore.toLocaleString()}</strong><span>{game.words}</span><span>{formatLatency(game.timeToScoreMs ?? game.latencyMs ?? 0)}</span>
+              <div><strong>{game.profile ?? game.model}</strong><small>{game.model} · {game.backend}</small></div>
+              <strong>{game.score.toLocaleString()} / {game.perfectScore.toLocaleString()}</strong><span>{game.words}</span><span>{game.error ? "error" : formatLatency(game.timeToScoreMs ?? game.latencyMs ?? 0)} · {game.retries}r</span>
             </div>
           ))}
         </div>
@@ -270,7 +271,7 @@ function Results({ state, onClose, onRestart, onNewBoard }: { state: ArenaState;
 }
 
 function previewGame(index: number): ArenaGame {
-  return { id: `preview-${index}`, ordinal: index, board: PREVIEW_BOARD, name: `Agent ${String(index + 1).padStart(2, "0")}`, model: index % 2 ? "Gemini 3.8 Flash" : "Gemma 4", backend: index % 2 ? "Vertex AI" : "Local GPU", score: 0, perfectScore: 0, words: 0, elapsedMs: 0, currentWord: "", swipe: { path: [], word: "", updatedAt: 0 }, status: "queued" };
+  return { id: `preview-${index}`, ordinal: index, board: PREVIEW_BOARD, name: `Agent ${String(index + 1).padStart(2, "0")}`, model: index < 3 ? "gemini-3.8-flash" : "gemma-4-26b-a4b-it", backend: "Google GenAI", profile: index < 3 ? "Gemini agent" : "Gemma profile", score: 0, perfectScore: 0, words: 0, retries: 0, elapsedMs: 0, currentWord: "", swipe: { path: [], word: "", updatedAt: 0 }, status: "queued" };
 }
 function formatTimer(ms: number) {
   const seconds = Math.max(0, Math.floor(ms / 1000));

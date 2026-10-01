@@ -49,6 +49,7 @@ type GameSpec struct {
 	RunID     string
 	GameID    string
 	Index     int
+	Total     int
 	Board     wordhunt.Board
 	Duration  time.Duration
 	PlayerMix string
@@ -112,6 +113,7 @@ type Stats struct {
 	P50LatencyMS   float64 `json:"p50_latency_ms"`
 	P95LatencyMS   float64 `json:"p95_latency_ms"`
 	Errors         int     `json:"errors"`
+	Retries        int     `json:"retries"`
 }
 
 // LeaderboardEntry is one completed game, sorted by score on final events.
@@ -128,6 +130,8 @@ type LeaderboardEntry struct {
 	Error         string   `json:"error,omitempty"`
 	PerfectScore  int      `json:"perfect_score"`
 	TimeToScoreMS float64  `json:"time_to_score_ms"`
+	Profile       string   `json:"profile"`
+	Retries       int      `json:"retries"`
 }
 
 // Game describes a live board.
@@ -221,6 +225,7 @@ type Run struct {
 	completed   int
 	words       int
 	errors      int
+	retries     int
 	latencies   []float64
 	leaderboard []LeaderboardEntry
 	sequence    uint64
@@ -544,7 +549,7 @@ func (r *Run) play(index int) {
 	r.publish(Event{Type: "game_started", Game: &game, Stats: pointer(r.currentStats())})
 
 	spec := GameSpec{
-		RunID: r.id, GameID: gameID, Index: index, Board: board, Duration: r.duration, PlayerMix: r.playerMix,
+		RunID: r.id, GameID: gameID, Index: index, Total: r.n, Board: board, Duration: r.duration, PlayerMix: r.playerMix,
 	}
 	player, err := r.manager.cfg.PlayerFactory(r.ctx, spec)
 	started := r.manager.cfg.Now()
@@ -559,6 +564,7 @@ func (r *Run) play(index int) {
 		cancel()
 	}
 	latency := result.Latency
+	r.addRetries(result.Retries)
 	if latency <= 0 {
 		latency = r.manager.cfg.Now().Sub(started)
 	}
@@ -572,6 +578,8 @@ func (r *Run) play(index int) {
 		LatencyMS:    durationMS(latency),
 		Fallback:     result.Fallback,
 		PerfectScore: r.perfectScore,
+		Profile:      result.Profile,
+		Retries:      result.Retries,
 	}
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
@@ -694,6 +702,12 @@ func (r *Run) addError() {
 	r.mu.Unlock()
 }
 
+func (r *Run) addRetries(count int) {
+	r.mu.Lock()
+	r.retries += count
+	r.mu.Unlock()
+}
+
 func (r *Run) currentStats() Stats {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -716,6 +730,7 @@ func (r *Run) statsLocked(now time.Time) Stats {
 		P50LatencyMS:   percentile(latencies, 0.50),
 		P95LatencyMS:   percentile(latencies, 0.95),
 		Errors:         r.errors,
+		Retries:        r.retries,
 	}
 }
 

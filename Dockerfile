@@ -21,7 +21,7 @@ COPY --from=web /src/web/dist /app/web
 
 ENV HOST=0.0.0.0 \
     PORT=8080 \
-    PLAYERS=mock \
+    PLAYERS=real \
     GATEWAY_API_KEYS=arena-local \
     ARENA_STATIC_DIR=/app/web
 EXPOSE 8080

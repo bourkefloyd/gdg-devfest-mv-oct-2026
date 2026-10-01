@@ -1,8 +1,6 @@
 package main
 
 import (
-	"context"
-	"errors"
 	"io/fs"
 	"net/http"
 	"os"
@@ -10,34 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"go-gateway/internal/api"
 	"go-gateway/internal/arena"
-	"go-gateway/internal/players"
+	"google.golang.org/genai"
 )
 
-func newArenaHandler(seats, agentSeats api.SeatFunc) http.Handler {
-	var realFactory arena.PlayerFactory
-	if env("PLAYERS", "mock") == "real" && seats != nil {
-		realFactory = func(_ context.Context, spec arena.GameSpec) (players.Player, error) {
-			seatFunc, mode, seat := seats, api.ModeHuman, 0
-			if spec.PlayerMix == "mixed" && spec.Index%2 == 1 {
-				mode, seat = api.ModeRace, 1
-			} else if agentSeats != nil && spec.Index%4 == 2 {
-				seatFunc = agentSeats
-			}
-			roster, err := seatFunc(mode)
-			if err != nil {
-				return nil, err
-			}
-			if len(roster) <= seat {
-				return nil, errors.New("requested arena model seat is unavailable")
-			}
-			return roster[seat], nil
-		}
-	}
+func newArenaHandler(client *genai.Client) http.Handler {
 	return arena.NewHandler(arena.Config{
-		MaxReal:         envInt("ARENA_MAX_REAL_GAMES", envInt("ARENA_MAX_GEMINI_GAMES", 8)),
-		RealFactory:     realFactory,
+		PlayerFactory:   newArenaProfileFactory(client),
 		DefaultDuration: time.Duration(envInt("ARENA_GAME_SECONDS", 10)) * time.Second,
 	})
 }

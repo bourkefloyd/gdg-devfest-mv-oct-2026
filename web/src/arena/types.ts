@@ -27,6 +27,8 @@ export interface ArenaGame {
   swipe: SwipeState;
   status: GameStatus;
   error?: string;
+  profile?: string;
+  retries: number;
 }
 
 export interface ArenaStats {
@@ -35,6 +37,7 @@ export interface ArenaStats {
   p50LatencyMs: number;
   p95LatencyMs: number;
   errors: number;
+  retries: number;
 }
 
 export interface ArenaState {

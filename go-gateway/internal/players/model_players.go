@@ -237,8 +237,10 @@ type GemmaPlayer struct {
 
 // HostedGemmaPlayer uses the Gemini API as a spillover tier for Gemma's seat.
 type HostedGemmaPlayer struct {
-	Client *genai.Client
-	Model  string
+	Client   *genai.Client
+	Model    string
+	Profile  string
+	Strategy string
 }
 
 func NewHostedGemmaPlayer(client *genai.Client, model string) *HostedGemmaPlayer {
@@ -246,6 +248,12 @@ func NewHostedGemmaPlayer(client *genai.Client, model string) *HostedGemmaPlayer
 		model = "gemma-4-26b-a4b-it"
 	}
 	return &HostedGemmaPlayer{Client: client, Model: model}
+}
+
+func NewProfiledHostedGemmaPlayer(client *genai.Client, model, profile, strategy string) *HostedGemmaPlayer {
+	player := NewHostedGemmaPlayer(client, model)
+	player.Profile, player.Strategy = profile, strategy
+	return player
 }
 
 func (p *HostedGemmaPlayer) Name() string { return "Gemma (hosted)" }
@@ -257,10 +265,17 @@ func (p *HostedGemmaPlayer) Play(ctx context.Context, b wordhunt.Board, deadline
 	}
 	ctx, cancel := moveContext(ctx, deadline)
 	defer cancel()
+	instruction := "Immediately return up to 25 likely words. No explanation. Exactly one line: WORDS: word, word, word"
+	switch p.Strategy {
+	case "diffusion":
+		instruction = "Explore diverse word candidates in parallel by length, then return the best verified-looking set. " + instruction
+	case "diffusion-jev":
+		instruction = "Use a generate-expand-verify strategy: propose diverse candidates, internally reject uncertain paths, then return only the survivors. " + instruction
+	}
 	resp, err := p.Client.Models.GenerateContent(
 		ctx,
 		p.Model,
-		genai.Text(boardPrompt(b)+"\nImmediately return up to 10 likely words. No explanation. Exactly one line: WORDS: word, word, word"),
+		genai.Text(boardPrompt(b)+"\n"+instruction),
 		&genai.GenerateContentConfig{
 			Temperature:     ptr(float32(0.2)),
 			MaxOutputTokens: 1024,
@@ -277,6 +292,7 @@ func (p *HostedGemmaPlayer) Play(ctx context.Context, b wordhunt.Board, deadline
 		Model:   p.Model,
 		Latency: time.Since(start),
 		Raw:     raw,
+		Profile: p.Profile,
 	}, err
 }
 
