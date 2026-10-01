@@ -9,7 +9,7 @@ mkdir -p "$OUT"
 for ((i=1; i<=RUNS; i++)); do
   echo "S1 run $i/$RUNS"
   K6_WEB_DASHBOARD=true \
-  K6_WEB_DASHBOARD_EXPORT="$OUT/s1-run-$i.html" \
+  K6_WEB_DASHBOARD_REPORT="$OUT/s1-run-$i.html" \
     k6 run --summary-export "$OUT/s1-run-$i.json" \
     "$ROOT/loadtest/s1-gateway.js"
 done
