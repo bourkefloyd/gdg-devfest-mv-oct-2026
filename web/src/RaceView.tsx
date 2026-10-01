@@ -676,7 +676,7 @@ function Timer({
   endsAt: string;
   status: ArenaGame["status"];
 }) {
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 250);
     return () => window.clearInterval(id);

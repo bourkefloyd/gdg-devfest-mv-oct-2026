@@ -190,7 +190,7 @@ export function normalizeGame(raw: unknown, input?: CreateGameInput): ArenaGame 
     maxScore: Number(value.max_score ?? value.max_possible_score ?? 0),
     players,
     commentary: strings(value.commentary),
-    status: Boolean(value.over)
+    status: value.over
       ? "finished"
       : ((value.status as ArenaGame["status"]) ?? "ready"),
   };

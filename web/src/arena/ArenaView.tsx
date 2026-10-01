@@ -13,7 +13,7 @@ const PREVIEW_BOARD = "STARNETOLOIDMEPC".split("");
 function App() {
   const [state, dispatch] = useReducer(arenaReducer, initialArenaState);
   const [count, setCount] = useState(24);
-  const [now, setNow] = useState(Date.now());
+  const [now, setNow] = useState(() => Date.now());
   const closeStream = useRef<() => void>(() => undefined);
   const request = useRef<AbortController | null>(null);
   const autoStarted = useRef(false);
