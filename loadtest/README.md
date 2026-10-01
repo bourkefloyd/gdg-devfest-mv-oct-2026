@@ -6,6 +6,14 @@ Prerequisites:
 brew install k6 ghz
 ```
 
+Download gated Gemma weights without exposing the HF token in process
+arguments (the token is read from the environment, HF cache, or main-checkout
+`.env`):
+
+```bash
+DOWNLOAD_PARTS=128 ./loadtest/download-gemma.sh
+```
+
 Start a deterministic worker from `go-gateway/`:
 
 ```bash
@@ -38,9 +46,10 @@ k6 run -e FLOOD_KEY=attacker -e NORMAL_KEY=demo loadtest/s4-abuse.js
 ```
 
 S1's default 1,000 VUs is intentionally aggressive. Smoke it first with
-`VUS=10 RAMP=2s HOLD=5s`. The API keys must be distinct configured gateway
-keys; otherwise the gateway's per-key limiter is the bottleneck being tested,
-not capacity.
+`VUS=10 RAMP=2s HOLD=5s`. S1 and S2 assign one distinct configured key per VU;
+put the same comma-separated list in `GATEWAY_API_KEYS` and `API_KEYS`.
+Otherwise the gateway's 2/s (burst 5) creation limit and 10-active-game cap
+measure per-key admission rather than gateway capacity.
 
 Use `K6_WEB_DASHBOARD=true K6_WEB_DASHBOARD_EXPORT=loadtest/results/s1.html`
 to retain the dashboard. Raw outputs under `loadtest/results/` are ignored so
