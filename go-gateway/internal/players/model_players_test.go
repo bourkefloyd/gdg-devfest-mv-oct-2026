@@ -70,6 +70,27 @@ func TestPlayerThinkingConfig(t *testing.T) {
 	}
 }
 
+func TestGeminiPlayerPromptIncludesNeighbors(t *testing.T) {
+	board := wordhunt.Board{Tiles: [16]byte{
+		'a', 'b', 'c', 'd',
+		'e', 'f', 'g', 'h',
+		'i', 'j', 'k', 'l',
+		'm', 'n', 'o', 'p',
+	}}
+	prompt := geminiPlayerPrompt(board)
+	for _, want := range []string{
+		"0:a -> [1:b, 4:e, 5:f]",
+		"5:f -> [0:a, 1:b, 2:c, 4:e, 6:g, 8:i, 9:j, 10:k]",
+		"Start with high-confidence 3-5 letter words",
+		"Worked rule example",
+		"Omit path",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt missing %q", want)
+		}
+	}
+}
+
 func FuzzParseGeminiOutput(f *testing.F) {
 	f.Add(`{"words":[{"word":"cat"}]}`)
 	f.Fuzz(func(t *testing.T, raw string) { _, _ = ParseGeminiOutput(raw) })
@@ -106,7 +127,7 @@ func TestGeminiLive(t *testing.T) {
 	score := 0
 	dict := wordhunt.Default()
 	for _, claim := range result.Claims {
-		if ok, _ := wordhunt.ValidateWord(board, dict, claim.Word, nil); ok {
+		if ok, _ := wordhunt.ValidateWord(board, dict, claim.Word, claim.Path); ok {
 			valid++
 			score += wordhunt.Score(claim.Word)
 		}

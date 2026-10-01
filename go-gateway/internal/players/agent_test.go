@@ -47,5 +47,9 @@ func TestGeminiAgentLive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("claims=%d latency=%s", len(result.Claims), result.Latency)
+	score := 0
+	for _, claim := range result.Claims {
+		score += wordhunt.Score(claim.Word)
+	}
+	t.Logf("claims=%d score=%d latency=%s", len(result.Claims), score, result.Latency)
 }
