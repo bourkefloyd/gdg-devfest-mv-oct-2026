@@ -25,11 +25,13 @@ var (
 	wordsPrefixRE = regexp.MustCompile(`(?i)WORDS:`)
 )
 
+type geminiWord struct {
+	Word string `json:"word"`
+	Path []int  `json:"path,omitempty"`
+}
+
 type geminiOutput struct {
-	Words []struct {
-		Word string `json:"word"`
-		Path []int  `json:"path,omitempty"`
-	} `json:"words"`
+	Words []geminiWord `json:"words"`
 }
 
 // ParseGeminiOutput strictly parses Gemini's structured response.
@@ -41,17 +43,26 @@ func ParseGeminiOutput(raw string) ([]Claim, error) {
 	dec.DisallowUnknownFields()
 	var out geminiOutput
 	if err := dec.Decode(&out); err != nil {
+		if isUnexpectedEOF(err) {
+			if words, salvageErr := salvageGeminiWords(raw); salvageErr == nil && len(words) > 0 {
+				return claimsFromGeminiWords(words)
+			}
+		}
 		return nil, fmt.Errorf("parse Gemini output: %w", err)
 	}
 	if err := ensureEOF(dec); err != nil {
 		return nil, err
 	}
-	if len(out.Words) > 150 {
+	return claimsFromGeminiWords(out.Words)
+}
+
+func claimsFromGeminiWords(words []geminiWord) ([]Claim, error) {
+	if len(words) > 150 {
 		return nil, errors.New("model returned more than 150 words")
 	}
-	claims := make([]Claim, 0, len(out.Words))
-	seen := make(map[string]struct{}, len(out.Words))
-	for _, item := range out.Words {
+	claims := make([]Claim, 0, len(words))
+	seen := make(map[string]struct{}, len(words))
+	for _, item := range words {
 		word := strings.ToLower(strings.TrimSpace(item.Word))
 		if !wordRE.MatchString(word) {
 			continue
@@ -63,6 +74,54 @@ func ParseGeminiOutput(raw string) ([]Claim, error) {
 		claims = append(claims, Claim{Word: word, Path: item.Path})
 	}
 	return claims, nil
+}
+
+func salvageGeminiWords(raw string) ([]geminiWord, error) {
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	token, err := dec.Token()
+	if err != nil || token != json.Delim('{') {
+		return nil, errors.New("truncated output is not an object")
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		if key != "words" {
+			return nil, fmt.Errorf("unexpected field %q", key)
+		}
+		token, err = dec.Token()
+		if err != nil || token != json.Delim('[') {
+			return nil, errors.New("words is not an array")
+		}
+		var words []geminiWord
+		for dec.More() {
+			var item geminiWord
+			if err := dec.Decode(&item); err != nil {
+				if isUnexpectedEOF(err) && len(words) > 0 {
+					return words, nil
+				}
+				return nil, err
+			}
+			words = append(words, item)
+			if len(words) > 150 {
+				return nil, errors.New("model returned more than 150 words")
+			}
+		}
+		if _, err := dec.Token(); isUnexpectedEOF(err) && len(words) > 0 {
+			return words, nil
+		} else if err != nil {
+			return nil, err
+		}
+		return words, nil
+	}
+	return nil, errors.New("truncated output has no words")
+}
+
+func isUnexpectedEOF(err error) bool {
+	return errors.Is(err, io.ErrUnexpectedEOF) ||
+		(err != nil && strings.Contains(err.Error(), "unexpected EOF"))
 }
 
 func ensureEOF(dec *json.Decoder) error {
@@ -106,10 +165,12 @@ func ParseGemmaOutput(raw string) ([]Claim, error) {
 }
 
 type GeminiPlayer struct {
-	Client   *genai.Client
-	Model    string
-	Backend  string
-	Thinking *genai.ThinkingConfig
+	Client          *genai.Client
+	Model           string
+	Backend         string
+	Thinking        *genai.ThinkingConfig
+	MaxOutputTokens int32
+	MaxWords        int
 }
 
 func NewGeminiPlayer(client *genai.Client, model string) *GeminiPlayer {
@@ -121,7 +182,9 @@ func NewGeminiPlayer(client *genai.Client, model string) *GeminiPlayer {
 	}
 	return &GeminiPlayer{
 		Client: client, Model: model, Backend: genAIBackendName(client),
-		Thinking: playerThinkingConfig(),
+		Thinking:        playerThinkingConfig(),
+		MaxOutputTokens: envInt32("GEMINI_PLAYER_MAX_OUTPUT_TOKENS", 8192, 512, 32768),
+		MaxWords:        int(envInt32("GEMINI_PLAYER_MAX_WORDS", 20, 1, 150)),
 	}
 }
 
@@ -151,12 +214,12 @@ func (p *GeminiPlayer) Play(ctx context.Context, b wordhunt.Board, deadline time
 		},
 		Required: []string{"words"},
 	}
-	prompt := geminiPlayerPrompt(b)
+	prompt := geminiPlayerPrompt(b, p.MaxWords)
 	resp, err := p.Client.Models.GenerateContent(ctx, p.Model, genai.Text(prompt), &genai.GenerateContentConfig{
 		ResponseMIMEType: "application/json",
 		ResponseSchema:   schema,
 		Temperature:      ptr(float32(0.2)),
-		MaxOutputTokens:  4096,
+		MaxOutputTokens:  p.MaxOutputTokens,
 		ThinkingConfig:   p.Thinking,
 	})
 	if err != nil {
@@ -275,12 +338,12 @@ func boardPrompt(b wordhunt.Board) string {
 	return "Word Hunt board (index:letter):\n" + strings.Join(rows, "\n")
 }
 
-func geminiPlayerPrompt(b wordhunt.Board) string {
-	return geminiSearchPrompt(b) +
+func geminiPlayerPrompt(b wordhunt.Board, maxWords int) string {
+	return geminiSearchPrompt(b, maxWords) +
 		"\nOmit path from the JSON; the server will derive it. Return only words formed from this board."
 }
 
-func geminiSearchPrompt(b wordhunt.Board) string {
+func geminiSearchPrompt(b wordhunt.Board, maxWords int) string {
 	var neighbors []string
 	for i := range b.Tiles {
 		row, col := i/4, i%4
@@ -301,7 +364,8 @@ func geminiSearchPrompt(b wordhunt.Board) string {
 		strings.Join(neighbors, "\n") +
 		"\n\nWorked rule example on an imaginary 2x2 board A B / C D: BAD is B(1)->A(0)->D(3), " +
 		"because each step is adjacent and no tile repeats. Do not submit example words unless they exist on the real board.\n" +
-		"Find up to 25 words. Start with high-confidence 3-5 letter words, then add longer words only when every transition is in the neighbor map. " +
+		fmt.Sprintf("Find at most %d words. ", maxWords) +
+		"Start with high-confidence 3-5 letter words, then add longer words only when every transition is in the neighbor map. " +
 		"Never reuse an index in one word."
 }
 
@@ -337,4 +401,16 @@ func playerThinkingConfig() *genai.ThinkingConfig {
 		}
 	}
 	return &genai.ThinkingConfig{ThinkingBudget: &budget}
+}
+
+func envInt32(name string, fallback, minimum, maximum int32) int32 {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || value < int64(minimum) || value > int64(maximum) {
+		return fallback
+	}
+	return int32(value)
 }
