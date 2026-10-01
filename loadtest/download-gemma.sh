@@ -7,6 +7,7 @@ DEST="${GEMMA_MODEL_DIR:-$HOME/projects/oxidizinggemma/models/gemma-4-e2b}"
 PARTS="${DOWNLOAD_PARTS:-16}"
 EXPECTED_SHA256="${EXPECTED_SHA256:-2db5482b20d746879bb3ef79b5203e9075a2e2b98f54ec7c2f281c1477ddc550}"
 URL="https://huggingface.co/$REPO/resolve/main/$FILENAME"
+PART_DIR="$DEST/.parts/$PARTS"
 
 if [[ -n "${HF_TOKEN:-}" ]]; then
   token="$HF_TOKEN"
@@ -21,7 +22,7 @@ else
 fi
 [[ -n "$token" ]] || { echo "HF_TOKEN is empty" >&2; exit 2; }
 
-mkdir -p "$DEST/.parts"
+mkdir -p "$PART_DIR"
 headers="$(mktemp)"
 auth_config="$(mktemp)"
 chmod 600 "$auth_config"
@@ -41,7 +42,7 @@ for ((i=0; i<PARTS; i++)); do
   start=$((i * chunk))
   end=$((start + chunk - 1))
   ((end >= total)) && end=$((total - 1))
-  part="$(printf '%s/.parts/%s.part.%03d' "$DEST" "$FILENAME" "$i")"
+  part="$(printf '%s/%s.part.%03d' "$PART_DIR" "$FILENAME" "$i")"
   existing=0
   [[ -f "$part" ]] && existing="$(stat -f %z "$part")"
   expected=$((end - start + 1))
@@ -70,7 +71,7 @@ for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
 tmp="$DEST/$FILENAME.assembling"
 : > "$tmp"
 for ((i=0; i<PARTS; i++)); do
-  part="$(printf '%s/.parts/%s.part.%03d' "$DEST" "$FILENAME" "$i")"
+  part="$(printf '%s/%s.part.%03d' "$PART_DIR" "$FILENAME" "$i")"
   cat "$part" >> "$tmp"
 done
 actual_sha="$(shasum -a 256 "$tmp" | awk '{print $1}')"
