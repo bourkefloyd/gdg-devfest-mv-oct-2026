@@ -81,6 +81,7 @@ function App() {
   const [dragging, setDragging] = useState(false);
   const [submission, setSubmission] = useState("");
   const cancelStream = useRef<() => void>(() => undefined);
+  const startRequest = useRef(0);
 
   const applyEvent = useCallback((event: ArenaEvent) => {
     setGame((current) => reduceEvent(current, event));
@@ -88,6 +89,7 @@ function App() {
 
   const startGame = useCallback(
     async (nextMode: Mode = mode) => {
+      const request = ++startRequest.current;
       cancelStream.current();
       setLoading(true);
       setError("");
@@ -95,6 +97,7 @@ function App() {
       setSubmission("");
       try {
         const result = await createGame({ mode: nextMode, duration_s: 80 });
+        if (request !== startRequest.current) return;
         const running = { ...result.game, status: "running" as const };
         setGame(running);
         setIsMock(result.mock);
@@ -115,7 +118,10 @@ function App() {
 
   useEffect(() => {
     void startGame("race");
-    return () => cancelStream.current();
+    return () => {
+      startRequest.current += 1;
+      cancelStream.current();
+    };
     // Start exactly once; mode changes happen via the controls.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
