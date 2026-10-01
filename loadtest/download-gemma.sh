@@ -50,16 +50,39 @@ for ((i=0; i<PARTS; i++)); do
     continue
   fi
   ((existing < expected)) || { echo "$part is oversized" >&2; exit 1; }
-  range_start=$((start + existing))
   (
-    curl --fail --silent --show-error --location \
-      --retry 20 --retry-all-errors --connect-timeout 20 \
-      --speed-limit 1024 --speed-time 60 \
-      --config "$auth_config" \
-      -r "$range_start-$end" "$URL" >> "$part"
-    actual="$(stat -f %z "$part")"
-    [[ "$actual" -eq "$expected" ]] ||
-      { echo "$part: expected $expected bytes, got $actual" >&2; exit 1; }
+    # Validate a resumed tail so a previously interrupted/retried HTTP range
+    # cannot silently leave duplicated bytes in a part.
+    if ((existing > 0)); then
+      sample=$((existing < 64 ? existing : 64))
+      probe="$(mktemp)"
+      until curl --fail --silent --show-error --location --config "$auth_config" \
+          -r "$((start + existing - sample))-$((start + existing - 1))" \
+          -o "$probe" "$URL"; do
+        sleep 1
+      done
+      if ! cmp -s <(tail -c "$sample" "$part") "$probe"; then
+        echo "$part failed resume-tail verification; restarting it" >&2
+        : > "$part"
+      fi
+      rm -f "$probe"
+    fi
+
+    while :; do
+      existing="$(stat -f %z "$part")"
+      [[ "$existing" -eq "$expected" ]] && break
+      if ((existing > expected)); then
+        echo "$part became oversized; restarting it" >&2
+        : > "$part"
+        existing=0
+      fi
+      range_start=$((start + existing))
+      if ! curl --fail --silent --show-error --location \
+        --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
+        --config "$auth_config" -r "$range_start-$end" "$URL" >> "$part"; then
+        sleep 1
+      fi
+    done
   ) &
   pids+=("$!")
 done
