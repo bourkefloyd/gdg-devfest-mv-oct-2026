@@ -274,46 +274,59 @@ async function streamEvents(
   signal: AbortSignal,
   onConnection?: (connected: boolean) => void,
 ) {
-  try {
-    const response = await fetch(`/v1/games/${id}/events`, {
-      headers: { Authorization: `Bearer ${API_KEY}`, Accept: "text/event-stream" },
-      signal,
-    });
-    if (!response.ok || !response.body) {
-      throw new Error(`SSE returned ${response.status}`);
-    }
-    onConnection?.(true);
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    while (!signal.aborted) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-      const messages = buffer.split("\n\n");
-      buffer = messages.pop() ?? "";
-      for (const message of messages) {
-        let eventName = "";
-        const data: string[] = [];
-        message.split("\n").forEach((line) => {
-          if (line.startsWith("event:")) eventName = line.slice(6).trim();
-          if (line.startsWith("data:")) data.push(line.slice(5).trim());
-        });
-        if (!data.length) continue;
-        try {
-          const payload = JSON.parse(data.join("\n")) as Record<string, unknown>;
-          onEvent(normalizeArenaEvent(eventName, payload));
-        } catch {
-          if (eventName === "commentary") {
-            onEvent({ type: "commentary", text: data.join("\n") });
+  let lastEventId = "";
+  let sawGameOver = false;
+  while (!signal.aborted) {
+    try {
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${API_KEY}`,
+        Accept: "text/event-stream",
+      };
+      if (lastEventId) headers["Last-Event-ID"] = lastEventId;
+      const response = await fetch(`/v1/games/${id}/events`, {
+        headers,
+        signal,
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`SSE returned ${response.status}`);
+      }
+      onConnection?.(true);
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      while (!signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+        const messages = buffer.split("\n\n");
+        buffer = messages.pop() ?? "";
+        for (const message of messages) {
+          let eventName = "";
+          const data: string[] = [];
+          message.split("\n").forEach((line) => {
+            if (line.startsWith("id:")) lastEventId = line.slice(3).trim();
+            if (line.startsWith("event:")) eventName = line.slice(6).trim();
+            if (line.startsWith("data:")) data.push(line.slice(5).trim());
+          });
+          if (!data.length) continue;
+          if (eventName === "game_over") sawGameOver = true;
+          try {
+            const payload = JSON.parse(data.join("\n")) as Record<string, unknown>;
+            onEvent(normalizeArenaEvent(eventName, payload));
+          } catch {
+            if (eventName === "commentary") {
+              onEvent({ type: "commentary", text: data.join("\n") });
+            }
           }
         }
       }
-    }
-  } catch (error) {
-    if (!signal.aborted) {
-      console.error("Event stream disconnected", error);
+      if (sawGameOver || signal.aborted) return;
+      throw new Error("SSE ended before game_over");
+    } catch (error) {
+      if (signal.aborted) return;
+      console.error("Event stream disconnected; reconnecting", error);
       onConnection?.(false);
+      await mockWait(2_000, signal);
     }
   }
 }
