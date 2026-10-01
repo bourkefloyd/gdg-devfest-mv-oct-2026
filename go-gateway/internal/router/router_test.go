@@ -59,6 +59,20 @@ func TestCircuitBreakerTransitions(t *testing.T) {
 	}
 }
 
+func TestCircuitBreakerOpensOnRollingErrorRate(t *testing.T) {
+	b := NewCircuitBreaker()
+	for i := range 20 {
+		var err error
+		if i%2 == 0 || i == 19 {
+			err = errors.New("failed")
+		}
+		b.Record(err)
+	}
+	if b.Allow() {
+		t.Fatal("breaker should open above 50% failures over 20 calls")
+	}
+}
+
 func TestFallbackPlayer(t *testing.T) {
 	first := &scriptedPlayer{errs: []error{errors.New("down")}}
 	second := &scriptedPlayer{errs: []error{nil}}
@@ -69,6 +83,16 @@ func TestFallbackPlayer(t *testing.T) {
 	}
 	if !result.Fallback || result.Backend != "test" {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestEmptyFallbackPlayer(t *testing.T) {
+	p := &FallbackPlayer{}
+	if p.Name() != "unconfigured" {
+		t.Fatalf("name = %q", p.Name())
+	}
+	if _, err := p.Play(context.Background(), wordhunt.Board{}, time.Now()); !errors.Is(err, ErrNoBackends) {
+		t.Fatalf("error = %v", err)
 	}
 }
 

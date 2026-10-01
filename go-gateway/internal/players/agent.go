@@ -109,7 +109,12 @@ func (p *GeminiAgent) Play(ctx context.Context, b wordhunt.Board, deadline time.
 				}
 			}
 			if ok {
-				accepted[word] = Claim{Word: word}
+				if len(accepted) < 150 {
+					accepted[word] = Claim{Word: word}
+				} else {
+					ok = false
+					reason = wordhunt.ReasonInvalidWord
+				}
 			}
 			verdicts = append(verdicts, map[string]any{
 				"word":     word,
