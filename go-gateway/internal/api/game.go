@@ -61,15 +61,15 @@ type Game struct {
 	streamToken string
 	dict        *wordhunt.Dict
 
-	mu      sync.Mutex
-	endsAt  time.Time
+	mu       sync.Mutex
+	endsAt   time.Time
 	over     bool
 	maxScore *int // set at game over
 	closed   bool // no more events will be published
-	order   []string
-	players map[string]*playerState
-	events  []Event
-	subs    map[chan struct{}]struct{}
+	order    []string
+	players  map[string]*playerState
+	events   []Event
+	subs     map[chan struct{}]struct{}
 }
 
 func newID() string {

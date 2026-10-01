@@ -61,6 +61,7 @@ type Config struct {
 
 	Dict        *wordhunt.Dict
 	Seats       SeatFunc
+	AgentSeats  SeatFunc // used when a game is created with "agent": true
 	Commentator players.Commentator
 	Chat        ChatBackend
 	Ready       ReadyFunc

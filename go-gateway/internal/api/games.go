@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"go-gateway/internal/players"
@@ -17,6 +18,7 @@ type createGameReq struct {
 	Mode      string `json:"mode"`
 	DurationS *int   `json:"duration_s"`
 	Seed      *int64 `json:"seed"`
+	Agent     bool   `json:"agent"`
 }
 
 type createGameResp struct {
@@ -70,9 +72,13 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var seats []players.Player
-	if s.cfg.Seats != nil {
+	seatFn := s.cfg.Seats
+	if req.Agent && s.cfg.AgentSeats != nil {
+		seatFn = s.cfg.AgentSeats
+	}
+	if seatFn != nil {
 		var err error
-		if seats, err = s.cfg.Seats(req.Mode); err != nil {
+		if seats, err = seatFn(req.Mode); err != nil {
 			s.store.finish(key)
 			writeError(w, http.StatusServiceUnavailable, "no_players", "players unavailable for this mode")
 			return
@@ -106,14 +112,14 @@ func (s *Server) handleCreateGame(w http.ResponseWriter, r *http.Request) {
 	s.store.put(g, dur+10*time.Minute)
 	gamesTotal.WithLabelValues(req.Mode).Inc()
 
-	s.wg.Add(1)
-	go s.runGame(g, seats, seatNames, hasHuman)
-
-	writeJSON(w, http.StatusCreated, createGameResp{
+	resp := createGameResp{
 		GameID: g.ID, Mode: g.Mode, Tiles: g.Board.String(), Seed: seed,
 		DurationS: int(dur / time.Second), EndsAt: g.endsAt,
 		Players: append([]string(nil), g.order...), StreamToken: g.streamToken,
-	})
+	}
+	s.wg.Add(1)
+	go s.runGame(g, seats, seatNames, hasHuman)
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // ownedGame returns the game only if it belongs to the caller's key; other
@@ -187,7 +193,8 @@ func wordEvent(player string, e WordEntry, total int) map[string]any {
 
 func (s *Server) runGame(g *Game, seats []players.Player, names []string, hasHuman bool) {
 	defer s.wg.Done()
-	ctx, cancel := context.WithDeadline(s.ctx, g.endsAt)
+	endsAt := g.endsAt
+	ctx, cancel := context.WithDeadline(s.ctx, endsAt)
 	defer cancel()
 
 	seatsDone := make(chan struct{})
@@ -195,14 +202,14 @@ func (s *Server) runGame(g *Game, seats []players.Player, names []string, hasHum
 		defer close(seatsDone)
 		done := make(chan struct{}, len(seats))
 		for i, p := range seats {
-			go func() { s.playSeat(ctx, g, names[i], p); done <- struct{}{} }()
+			go func() { s.playSeat(ctx, g, endsAt, names[i], p); done <- struct{}{} }()
 		}
 		for range seats {
 			<-done
 		}
 	}()
 
-	timer := time.NewTimer(time.Until(g.endsAt))
+	timer := time.NewTimer(time.Until(endsAt))
 	defer timer.Stop()
 	early := seatsDone
 	if hasHuman {
@@ -263,9 +270,9 @@ func moveDeadline(now, endsAt time.Time) time.Time {
 	return d
 }
 
-func (s *Server) playSeat(ctx context.Context, g *Game, name string, p players.Player) {
+func (s *Server) playSeat(ctx context.Context, g *Game, endsAt time.Time, name string, p players.Player) {
 	now := time.Now()
-	deadline := moveDeadline(now, g.endsAt)
+	deadline := moveDeadline(now, endsAt)
 	mctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 
@@ -307,7 +314,10 @@ func (s *Server) playSeat(ctx context.Context, g *Game, name string, p players.P
 		}
 		t := time.Now()
 		for _, c := range claims {
-			e := g.claimLocked(ps, c.Word, c.Path, t)
+			// Model paths are advisory: score the word if any valid path
+			// exists, and only record whether the claimed path was right.
+			recordPathClaim(g, c)
+			e := g.claimLocked(ps, c.Word, nil, t)
 			g.publishLocked("word", wordEvent(name, e, ps.Score))
 		}
 	}
@@ -316,6 +326,33 @@ func (s *Server) playSeat(ctx context.Context, g *Game, name string, p players.P
 		"fallback": ps.Fallback, "latency_ms": ps.LatencyMs, "score": ps.Score,
 		"accepted": len(ps.Accepted), "rejected": len(ps.Rejected) + ps.Dropped, "error": ps.Error,
 	})
+}
+
+func recordPathClaim(g *Game, c players.Claim) {
+	switch {
+	case len(c.Path) == 0:
+		pathClaims.WithLabelValues("none").Inc()
+	case validPathIndices(c.Path):
+		if ok, _ := wordhunt.ValidateWord(g.Board, g.dict, strings.ToLower(c.Word), c.Path); ok {
+			pathClaims.WithLabelValues("correct").Inc()
+			return
+		}
+		fallthrough
+	default:
+		pathClaims.WithLabelValues("wrong").Inc()
+	}
+}
+
+func validPathIndices(path []int) bool {
+	if len(path) > wordhunt.MaxLen {
+		return false
+	}
+	for _, i := range path {
+		if i < 0 || i >= wordhunt.NumTiles {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) safePlay(ctx context.Context, p players.Player, b wordhunt.Board, deadline time.Time) (res players.Result, err error) {

@@ -149,6 +149,7 @@ func GeminiRetryable(err error) bool {
 }
 
 var ErrCircuitOpen = errors.New("model circuit breaker is open")
+var ErrNoBackends = errors.New("model fallback chain is empty")
 
 type BreakerPlayer struct {
 	Player  players.Player
@@ -176,10 +177,16 @@ func (p *FallbackPlayer) Name() string {
 	if p.NameLabel != "" {
 		return p.NameLabel
 	}
+	if len(p.Chain) == 0 {
+		return "unconfigured"
+	}
 	return p.Chain[0].Name()
 }
 
 func (p *FallbackPlayer) Play(ctx context.Context, b wordhunt.Board, deadline time.Time) (players.Result, error) {
+	if len(p.Chain) == 0 {
+		return players.Result{}, ErrNoBackends
+	}
 	var errs []error
 	for i, candidate := range p.Chain {
 		result, err := candidate.Play(ctx, b, deadline)

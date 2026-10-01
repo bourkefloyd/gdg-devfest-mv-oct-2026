@@ -57,6 +57,19 @@ func TestParseGemmaOutput(t *testing.T) {
 	}
 }
 
+func TestPlayerThinkingConfig(t *testing.T) {
+	t.Setenv("GEMINI_PLAYER_THINKING_LEVEL", "low")
+	t.Setenv("GEMINI_PLAYER_THINKING_BUDGET", "999")
+	if got := playerThinkingConfig(); got.ThinkingLevel != genai.ThinkingLevelLow || got.ThinkingBudget != nil {
+		t.Fatalf("level should take precedence: %#v", got)
+	}
+	t.Setenv("GEMINI_PLAYER_THINKING_LEVEL", "")
+	t.Setenv("GEMINI_PLAYER_THINKING_BUDGET", "64")
+	if got := playerThinkingConfig(); got.ThinkingBudget == nil || *got.ThinkingBudget != 64 {
+		t.Fatalf("budget = %#v", got)
+	}
+}
+
 func FuzzParseGeminiOutput(f *testing.F) {
 	f.Add(`{"words":[{"word":"cat"}]}`)
 	f.Fuzz(func(t *testing.T, raw string) { _, _ = ParseGeminiOutput(raw) })
@@ -90,16 +103,18 @@ func TestGeminiLive(t *testing.T) {
 		t.Fatal("Gemini returned no parseable claims")
 	}
 	valid := 0
+	score := 0
 	dict := wordhunt.Default()
 	for _, claim := range result.Claims {
 		if ok, _ := wordhunt.ValidateWord(board, dict, claim.Word, nil); ok {
 			valid++
+			score += wordhunt.Score(claim.Word)
 		}
 	}
 	if valid == 0 {
 		t.Fatal("Gemini returned no server-valid claims")
 	}
-	t.Logf("model=%s claims=%d valid=%d latency=%s", result.Model, len(result.Claims), valid, result.Latency)
+	t.Logf("model=%s claims=%d valid=%d score=%d latency=%s", result.Model, len(result.Claims), valid, score, result.Latency)
 }
 
 func TestGeminiPlayerFakeServer(t *testing.T) {
