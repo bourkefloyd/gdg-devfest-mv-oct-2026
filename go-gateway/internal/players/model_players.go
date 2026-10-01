@@ -159,6 +159,51 @@ type GemmaPlayer struct {
 	Model  string
 }
 
+// HostedGemmaPlayer uses the Gemini API as a spillover tier for Gemma's seat.
+type HostedGemmaPlayer struct {
+	Client *genai.Client
+	Model  string
+}
+
+func NewHostedGemmaPlayer(client *genai.Client, model string) *HostedGemmaPlayer {
+	if model == "" {
+		model = "gemma-4-26b-a4b-it"
+	}
+	return &HostedGemmaPlayer{Client: client, Model: model}
+}
+
+func (p *HostedGemmaPlayer) Name() string { return "Gemma (hosted)" }
+
+func (p *HostedGemmaPlayer) Play(ctx context.Context, b wordhunt.Board, deadline time.Time) (Result, error) {
+	start := time.Now()
+	if p.Client == nil {
+		return Result{}, errors.New("nil hosted Gemma client")
+	}
+	ctx, cancel := moveContext(ctx, deadline)
+	defer cancel()
+	resp, err := p.Client.Models.GenerateContent(
+		ctx,
+		p.Model,
+		genai.Text(boardPrompt(b)+"\nImmediately return up to 10 likely words. No explanation. Exactly one line: WORDS: word, word, word"),
+		&genai.GenerateContentConfig{
+			Temperature:     ptr(float32(0.2)),
+			MaxOutputTokens: 1024,
+		},
+	)
+	if err != nil {
+		return Result{}, err
+	}
+	raw := resp.Text()
+	claims, err := ParseGemmaOutput(raw)
+	return Result{
+		Claims:  claims,
+		Backend: "gemini-api-hosted-gemma",
+		Model:   p.Model,
+		Latency: time.Since(start),
+		Raw:     raw,
+	}, err
+}
+
 func NewGemmaPlayer(client inference.InferenceServiceClient, model string) *GemmaPlayer {
 	if model == "" {
 		model = "gemma-4-e2b"

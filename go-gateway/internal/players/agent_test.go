@@ -1,6 +1,13 @@
 package players
 
-import "testing"
+import (
+	"context"
+	"os"
+	"testing"
+	"time"
+
+	"go-gateway/internal/wordhunt"
+)
 
 func TestWordsArgument(t *testing.T) {
 	words, err := wordsArgument(map[string]any{"words": []any{"cat", "tone"}})
@@ -19,4 +26,26 @@ func TestWordsArgument(t *testing.T) {
 			t.Fatalf("expected error for %#v", args)
 		}
 	}
+}
+
+func TestGeminiAgentLive(t *testing.T) {
+	if os.Getenv("LIVE_GEMINI_AGENT") != "1" {
+		t.Skip("set LIVE_GEMINI_AGENT=1 to call the real Gemini API")
+	}
+	client, err := NewGenAIClient(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	board := wordhunt.Board{Tiles: [16]byte{
+		'c', 'a', 't', 's',
+		'r', 'o', 'n', 'e',
+		'l', 'i', 'p', 'd',
+		'm', 'u', 'g', 'h',
+	}}
+	result, err := NewGeminiAgent(client, "", wordhunt.Default()).
+		Play(context.Background(), board, time.Now().Add(35*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("claims=%d latency=%s", len(result.Claims), result.Latency)
 }

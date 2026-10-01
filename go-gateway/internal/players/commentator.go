@@ -17,7 +17,7 @@ type GeminiCommentator struct {
 
 func NewGeminiCommentator(client *genai.Client, model string) *GeminiCommentator {
 	if model == "" {
-		model = "gemini-3.8-flash-lite"
+		model = "gemini-3.1-flash-lite"
 	}
 	return &GeminiCommentator{Client: client, Model: model}
 }
