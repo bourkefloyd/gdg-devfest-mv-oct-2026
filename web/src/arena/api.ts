@@ -7,17 +7,30 @@ const EVENT_NAMES = [
   "game-finished", "stats", "snapshot", "run_finished", "run-finished", "complete", "error",
 ];
 
-export async function createRun(count: number, signal?: AbortSignal): Promise<RunCreatedResponse> {
+export async function createRun(
+  count: number,
+  playerMix: "bots" | "gemini" | "mixed",
+  durationSeconds: 10 | 30,
+  seed?: number,
+  signal?: AbortSignal,
+): Promise<RunCreatedResponse> {
   const response = await fetch(`${API_BASE}/api/arena/runs`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ count }),
+    body: JSON.stringify({ count, player_mix: playerMix, duration_s: durationSeconds, ...(seed === undefined ? {} : { seed }) }),
     signal,
   });
   if (!response.ok) throw new Error(await apiError(response, "Unable to start arena run"));
   const body = (await response.json()) as Partial<RunCreatedResponse>;
-  if (!body.run_id || typeof body.run_id !== "string") throw new Error("Arena API returned no run_id");
-  return { run_id: body.run_id };
+  if (!body.run_id || typeof body.run_id !== "string" || typeof body.seed !== "number" || typeof body.tiles !== "string") {
+    throw new Error("Arena API returned an incomplete run");
+  }
+  return {
+    run_id: body.run_id,
+    seed: body.seed,
+    tiles: body.tiles,
+    player_mix: body.player_mix ?? playerMix,
+  };
 }
 
 export async function cancelRun(runId: string): Promise<void> {

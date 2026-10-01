@@ -134,6 +134,9 @@ func (p *GeminiAgent) Play(ctx context.Context, b wordhunt.Board, deadline time.
 			map[string]any{"verdicts": verdicts, "instruction": "Try different valid words not already accepted."},
 		))
 		if err != nil {
+			if ctx.Err() != nil && len(accepted) > 0 {
+				break
+			}
 			return Result{}, err
 		}
 	}
