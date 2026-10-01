@@ -10,6 +10,10 @@ import (
 
 	"go-gateway/internal/players"
 	"go-gateway/internal/wordhunt"
+
+	"google.golang.org/genai"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 type RetryPlayer struct {
@@ -55,6 +59,11 @@ func (p *RetryPlayer) Play(ctx context.Context, b wordhunt.Board, deadline time.
 
 type breakerState uint8
 
+type outcome struct {
+	at     time.Time
+	failed bool
+}
+
 const (
 	closed breakerState = iota
 	open
@@ -68,6 +77,7 @@ type CircuitBreaker struct {
 	openedAt      time.Time
 	halfOpenAfter time.Duration
 	now           func() time.Time
+	recent        []outcome
 }
 
 func NewCircuitBreaker() *CircuitBreaker {
@@ -90,16 +100,52 @@ func (b *CircuitBreaker) Allow() bool {
 func (b *CircuitBreaker) Record(err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	now := b.now()
+	cutoff := now.Add(-30 * time.Second)
+	kept := b.recent[:0]
+	for _, item := range b.recent {
+		if !item.at.Before(cutoff) {
+			kept = append(kept, item)
+		}
+	}
+	b.recent = append(kept, outcome{at: now, failed: err != nil})
+	if len(b.recent) > 20 {
+		b.recent = b.recent[len(b.recent)-20:]
+	}
 	if err == nil {
 		b.failures = 0
 		b.state = closed
+		if len(b.recent) == 1 {
+			b.recent = nil
+		}
 		return
 	}
 	b.failures++
-	if b.failures >= 5 || b.state == halfOpen {
-		b.state = open
-		b.openedAt = b.now()
+	windowFailures := 0
+	for _, item := range b.recent {
+		if item.failed {
+			windowFailures++
+		}
 	}
+	if b.failures >= 5 || b.state == halfOpen ||
+		(len(b.recent) >= 20 && windowFailures*2 > len(b.recent)) {
+		b.state = open
+		b.openedAt = now
+	}
+}
+
+// GeminiRetryable implements the retry policy for transient SDK failures.
+func GeminiRetryable(err error) bool {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return true
+	}
+	var apiErr genai.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Code == 429 || apiErr.Code == 500 || apiErr.Code == 503
+	}
+	code := status.Code(err)
+	return code == codes.ResourceExhausted || code == codes.Internal ||
+		code == codes.Unavailable || code == codes.DeadlineExceeded
 }
 
 var ErrCircuitOpen = errors.New("model circuit breaker is open")
