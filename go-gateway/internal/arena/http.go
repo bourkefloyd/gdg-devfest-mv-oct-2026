@@ -124,11 +124,7 @@ func (m *Manager) handleStart(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Manager) handleEvents(w http.ResponseWriter, r *http.Request, run *Run) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		writeError(w, http.StatusInternalServerError, "streaming_unsupported", "response writer does not support streaming")
-		return
-	}
+	controller := http.NewResponseController(w)
 	afterID := uint64(0)
 	if value := r.Header.Get("Last-Event-ID"); value != "" {
 		var err error
@@ -155,14 +151,18 @@ func (m *Manager) handleEvents(w http.ResponseWriter, r *http.Request, run *Run)
 	w.Header().Set("X-Accel-Buffering", "no")
 	w.WriteHeader(http.StatusOK)
 	_, _ = io.WriteString(w, "retry: 1000\n\n")
-	flusher.Flush()
+	if err := controller.Flush(); err != nil {
+		return
+	}
 
 	for _, event := range replay {
 		if err := writeSSE(w, event); err != nil {
 			return
 		}
 	}
-	flusher.Flush()
+	if err := controller.Flush(); err != nil {
+		return
+	}
 
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
@@ -177,12 +177,16 @@ func (m *Manager) handleEvents(w http.ResponseWriter, r *http.Request, run *Run)
 			if err := writeSSE(w, event); err != nil {
 				return
 			}
-			flusher.Flush()
+			if err := controller.Flush(); err != nil {
+				return
+			}
 		case <-heartbeat.C:
 			if _, err := io.WriteString(w, ": keep-alive\n\n"); err != nil {
 				return
 			}
-			flusher.Flush()
+			if err := controller.Flush(); err != nil {
+				return
+			}
 		}
 	}
 }
