@@ -62,10 +62,12 @@ export type CreateGameInput = {
   seed?: number;
 };
 
+const storedAPIKey =
+  typeof localStorage === "undefined"
+    ? null
+    : localStorage.getItem("wordhunt_api_key");
 const API_KEY =
-  import.meta.env.VITE_GATEWAY_API_KEY ||
-  localStorage.getItem("wordhunt_api_key") ||
-  "demo-key";
+  import.meta.env.VITE_GATEWAY_API_KEY || storedAPIKey || "demo-key";
 const FORCE_MOCK = import.meta.env.VITE_MOCK_API === "true";
 
 function authHeaders() {
