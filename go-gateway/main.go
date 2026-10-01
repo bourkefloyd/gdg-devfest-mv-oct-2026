@@ -97,7 +97,7 @@ func main() {
 	srv.MountPublic("POST /api/arena/runs/{id}/cancel", arenaHandler)
 	srv.MountPublic("GET /", newArenaWebHandler())
 
-	addr := net.JoinHostPort(env("HOST", "127.0.0.1"), env("PORT", "8787"))
+	addr := net.JoinHostPort(env("HOST", "0.0.0.0"), env("PORT", "8787"))
 	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           srv.Handler(),

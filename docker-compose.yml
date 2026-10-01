@@ -2,7 +2,6 @@ services:
   arena:
     build:
       context: .
-      dockerfile: Dockerfile.arena
     environment:
       HOST: 0.0.0.0
       PORT: "8080"

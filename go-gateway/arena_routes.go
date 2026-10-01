@@ -26,8 +26,15 @@ func newArenaWebHandler() http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
-		if name == "" {
-			name = "index.html"
+		if name == "" || name == "index.html" {
+			index, err := fs.ReadFile(files, "index.html")
+			if err != nil {
+				http.Error(w, "arena UI is not built; run `make arena-build`", http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write(index)
+			return
 		}
 		if _, err := fs.Stat(files, name); err == nil {
 			clone := r.Clone(r.Context())

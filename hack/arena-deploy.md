@@ -49,13 +49,16 @@ gcloud run deploy word-hunt-arena \
   --image "$IMAGE" \
   --allow-unauthenticated \
   --set-env-vars "HOST=0.0.0.0,PLAYERS=mock,GATEWAY_API_KEYS=arena-local,ARENA_STATIC_DIR=/app/web" \
-  --concurrency 100 \
-  --cpu 2 \
-  --memory 512Mi \
-  --max-instances 4
+  --concurrency 1000 \
+  --cpu 4 \
+  --memory 2Gi \
+  --min-instances 1 \
+  --max-instances 1 \
+  --no-cpu-throttling \
+  --session-affinity
 ```
 
-Cloud Run supplies `$PORT`. Each replica has its own in-memory run state, so
-production multi-replica routing needs session affinity or an external run
-store. For this stateless demo, one active browser session per replica is the
-intended mode.
+Cloud Run supplies `$PORT`. Arena state is in memory, so this demo intentionally
+runs on one instance; session affinity is only a backup, not a correctness
+mechanism. Multi-instance production serving needs an external run store or
+deterministic routing by `run_id`.
