@@ -1,8 +1,13 @@
 package players
 
 import (
+	"context"
+	"os"
 	"strings"
 	"testing"
+	"time"
+
+	"go-gateway/internal/wordhunt"
 )
 
 func TestParseGeminiOutput(t *testing.T) {
@@ -39,7 +44,7 @@ func TestParseGemmaOutput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(claims) != 2 || claims[0].Word != "cat" || claims[1].Word != "tone" {
+	if len(claims) != 5 || claims[0].Word != "cat" || claims[1].Word != "tone" {
 		t.Fatalf("unexpected claims: %#v", claims)
 	}
 	if _, err := ParseGemmaOutput("cat, tone"); err == nil {
@@ -55,4 +60,29 @@ func FuzzParseGeminiOutput(f *testing.F) {
 func FuzzParseGemmaOutput(f *testing.F) {
 	f.Add("WORDS: cat, tone")
 	f.Fuzz(func(t *testing.T, raw string) { _, _ = ParseGemmaOutput(raw) })
+}
+
+func TestGeminiLive(t *testing.T) {
+	if os.Getenv("LIVE_GEMINI") != "1" {
+		t.Skip("set LIVE_GEMINI=1 to call the real Gemini API")
+	}
+	client, err := NewGenAIClient(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	board := wordhunt.Board{Tiles: [16]byte{
+		'c', 'a', 't', 's',
+		'r', 'o', 'n', 'e',
+		'l', 'i', 'p', 'd',
+		'm', 'u', 'g', 'h',
+	}}
+	result, err := NewGeminiPlayer(client, os.Getenv("GEMINI_PLAYER_MODEL")).
+		Play(context.Background(), board, time.Now().Add(20*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Claims) == 0 {
+		t.Fatal("Gemini returned no parseable claims")
+	}
+	t.Logf("model=%s claims=%d latency=%s", result.Model, len(result.Claims), result.Latency)
 }
