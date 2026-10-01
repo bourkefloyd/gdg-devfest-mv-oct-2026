@@ -49,7 +49,7 @@ export const options = {
 function create(key, tags) {
   const response = http.post(
     `${baseURL}/v1/games`,
-    JSON.stringify({ mode: "load", duration_s: 10 }),
+    JSON.stringify({ mode: "load", duration_s: Number(__ENV.ROUND_SECONDS || 5) }),
     {
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
       tags,
