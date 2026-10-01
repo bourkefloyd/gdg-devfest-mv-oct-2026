@@ -107,7 +107,7 @@ type GeminiPlayer struct {
 
 func NewGeminiPlayer(client *genai.Client, model string) *GeminiPlayer {
 	if model == "" {
-		model = "gemini-2.5-flash"
+		model = "gemini-3.8-flash"
 	}
 	return &GeminiPlayer{Client: client, Model: model}
 }
@@ -121,13 +121,11 @@ func (p *GeminiPlayer) Play(ctx context.Context, b wordhunt.Board, deadline time
 	}
 	ctx, cancel := moveContext(ctx, deadline)
 	defer cancel()
-	maxItems := int64(150)
 	schema := &genai.Schema{
 		Type: genai.TypeObject,
 		Properties: map[string]*genai.Schema{
 			"words": {
-				Type:     genai.TypeArray,
-				MaxItems: &maxItems,
+				Type: genai.TypeArray,
 				Items: &genai.Schema{
 					Type: genai.TypeObject,
 					Properties: map[string]*genai.Schema{
@@ -140,12 +138,13 @@ func (p *GeminiPlayer) Play(ctx context.Context, b wordhunt.Board, deadline time
 		},
 		Required: []string{"words"},
 	}
-	prompt := boardPrompt(b) + "\nReturn every Word Hunt word you can find. Each tile may be used once per word and consecutive tiles must touch in any of 8 directions."
+	prompt := boardPrompt(b) + "\nReturn up to 25 of the best Word Hunt words you can find. Each tile may be used once per word and consecutive tiles must touch in any of 8 directions."
 	resp, err := p.Client.Models.GenerateContent(ctx, p.Model, genai.Text(prompt), &genai.GenerateContentConfig{
 		ResponseMIMEType: "application/json",
 		ResponseSchema:   schema,
 		Temperature:      ptr(float32(0.2)),
 		MaxOutputTokens:  4096,
+		ThinkingConfig:   &genai.ThinkingConfig{ThinkingBudget: ptr(int32(128))},
 	})
 	if err != nil {
 		return Result{}, err
