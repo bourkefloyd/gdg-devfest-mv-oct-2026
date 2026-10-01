@@ -18,7 +18,7 @@ export const options = {
       stages: [
         { duration: __ENV.RAMP || "20s", target: Number(__ENV.VUS || 1000) },
         { duration: __ENV.HOLD || "30s", target: Number(__ENV.VUS || 1000) },
-        { duration: "10s", target: 0 },
+        { duration: __ENV.RAMP_DOWN || "10s", target: 0 },
       ],
       gracefulRampDown: "10s",
     },
