@@ -3,12 +3,13 @@ import { sleep } from "k6";
 import { Counter, Rate, Trend } from "k6/metrics";
 
 const baseURL = __ENV.BASE_URL || "http://127.0.0.1:8787";
-const apiKey = __ENV.API_KEY || "load-test-key";
+const keys = (__ENV.API_KEYS || __ENV.API_KEY || "load-test-key").split(",");
 const moveLatency = new Trend("game_completion_seconds", true);
 const completed = new Rate("games_scored");
 const userErrors = new Rate("user_visible_errors");
 const fallback = new Counter("fallback_total_observed");
 const gemini429 = new Counter("gemini_429_observed");
+let exercised = false;
 
 export const options = {
   scenarios: {
@@ -31,19 +32,27 @@ export const options = {
   },
 };
 
-const params = {
-  headers: {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${apiKey}`,
-  },
-};
+function params() {
+  return {
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${keys[(__VU - 1) % keys.length]}`,
+    },
+  };
+}
 
 export default function () {
+  if (exercised) {
+    sleep(1);
+    return;
+  }
+  exercised = true;
+
   const started = Date.now();
   const create = http.post(
     `${baseURL}/v1/games`,
     JSON.stringify({ mode: "race", duration_s: Number(__ENV.ROUND_SECONDS || 15) }),
-    params,
+    params(),
   );
   if (![200, 201].includes(create.status)) {
     userErrors.add(true);
@@ -56,7 +65,7 @@ export default function () {
   let state;
   const timeout = Date.now() + Number(__ENV.TIMEOUT_MS || 30000);
   while (Date.now() < timeout) {
-    const response = http.get(`${baseURL}/v1/games/${gameID}`, params);
+    const response = http.get(`${baseURL}/v1/games/${gameID}`, params());
     if (response.status !== 200) {
       userErrors.add(true);
       return;
