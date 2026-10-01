@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,7 +20,10 @@ import (
 
 const maxRawOutput = 16 << 10
 
-var wordRE = regexp.MustCompile(`^[a-z]{3,16}$`)
+var (
+	wordRE        = regexp.MustCompile(`^[a-z]{3,16}$`)
+	wordsPrefixRE = regexp.MustCompile(`(?i)WORDS:`)
+)
 
 type geminiOutput struct {
 	Words []struct {
@@ -76,11 +81,11 @@ func ParseGemmaOutput(raw string) ([]Claim, error) {
 	if len(raw) > maxRawOutput {
 		return nil, errors.New("model output exceeds 16 KiB")
 	}
-	i := strings.Index(strings.ToUpper(raw), "WORDS:")
-	if i < 0 {
+	loc := wordsPrefixRE.FindStringIndex(raw)
+	if loc == nil {
 		return nil, errors.New("missing WORDS: prefix")
 	}
-	parts := regexp.MustCompile(`[^A-Za-z]+`).Split(raw[i+len("WORDS:"):], -1)
+	parts := regexp.MustCompile(`[^A-Za-z]+`).Split(raw[loc[1]:], -1)
 	claims := make([]Claim, 0, min(len(parts), 150))
 	seen := map[string]struct{}{}
 	for _, part := range parts {
@@ -101,15 +106,23 @@ func ParseGemmaOutput(raw string) ([]Claim, error) {
 }
 
 type GeminiPlayer struct {
-	Client *genai.Client
-	Model  string
+	Client   *genai.Client
+	Model    string
+	Backend  string
+	Thinking *genai.ThinkingConfig
 }
 
 func NewGeminiPlayer(client *genai.Client, model string) *GeminiPlayer {
 	if model == "" {
+		model = os.Getenv("GEMINI_PLAYER_MODEL")
+	}
+	if model == "" {
 		model = "gemini-3.8-flash"
 	}
-	return &GeminiPlayer{Client: client, Model: model}
+	return &GeminiPlayer{
+		Client: client, Model: model, Backend: genAIBackendName(client),
+		Thinking: playerThinkingConfig(),
+	}
 }
 
 func (p *GeminiPlayer) Name() string { return "Gemini" }
@@ -138,20 +151,20 @@ func (p *GeminiPlayer) Play(ctx context.Context, b wordhunt.Board, deadline time
 		},
 		Required: []string{"words"},
 	}
-	prompt := boardPrompt(b) + "\nReturn up to 25 of the best Word Hunt words you can find. Each tile may be used once per word and consecutive tiles must touch in any of 8 directions."
+	prompt := geminiPlayerPrompt(b)
 	resp, err := p.Client.Models.GenerateContent(ctx, p.Model, genai.Text(prompt), &genai.GenerateContentConfig{
 		ResponseMIMEType: "application/json",
 		ResponseSchema:   schema,
 		Temperature:      ptr(float32(0.2)),
 		MaxOutputTokens:  4096,
-		ThinkingConfig:   &genai.ThinkingConfig{ThinkingBudget: ptr(int32(128))},
+		ThinkingConfig:   p.Thinking,
 	})
 	if err != nil {
 		return Result{}, err
 	}
 	raw := resp.Text()
 	claims, err := ParseGeminiOutput(raw)
-	return Result{Claims: claims, Backend: "gemini-api", Model: p.Model, Latency: time.Since(start), Raw: raw}, err
+	return Result{Claims: claims, Backend: p.Backend, Model: p.Model, Latency: time.Since(start), Raw: raw}, err
 }
 
 type GemmaPlayer struct {
@@ -262,6 +275,36 @@ func boardPrompt(b wordhunt.Board) string {
 	return "Word Hunt board (index:letter):\n" + strings.Join(rows, "\n")
 }
 
+func geminiPlayerPrompt(b wordhunt.Board) string {
+	return geminiSearchPrompt(b) +
+		"\nOmit path from the JSON; the server will derive it. Return only words formed from this board."
+}
+
+func geminiSearchPrompt(b wordhunt.Board) string {
+	var neighbors []string
+	for i := range b.Tiles {
+		row, col := i/4, i%4
+		var adjacent []string
+		for dr := -1; dr <= 1; dr++ {
+			for dc := -1; dc <= 1; dc++ {
+				nextRow, nextCol := row+dr, col+dc
+				if (dr == 0 && dc == 0) || nextRow < 0 || nextRow >= 4 || nextCol < 0 || nextCol >= 4 {
+					continue
+				}
+				next := nextRow*4 + nextCol
+				adjacent = append(adjacent, fmt.Sprintf("%d:%c", next, b.Tiles[next]))
+			}
+		}
+		neighbors = append(neighbors, fmt.Sprintf("%d:%c -> [%s]", i, b.Tiles[i], strings.Join(adjacent, ", ")))
+	}
+	return boardPrompt(b) + "\n\nExact neighbor map (a word may move only along these links):\n" +
+		strings.Join(neighbors, "\n") +
+		"\n\nWorked rule example on an imaginary 2x2 board A B / C D: BAD is B(1)->A(0)->D(3), " +
+		"because each step is adjacent and no tile repeats. Do not submit example words unless they exist on the real board.\n" +
+		"Find up to 25 words. Start with high-confidence 3-5 letter words, then add longer words only when every transition is in the neighbor map. " +
+		"Never reuse an index in one word."
+}
+
 func moveContext(parent context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
 	limit := time.Now().Add(25 * time.Second)
 	if d := deadline.Add(-3 * time.Second); d.Before(limit) {
@@ -271,3 +314,27 @@ func moveContext(parent context.Context, deadline time.Time) (context.Context, c
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func genAIBackendName(client *genai.Client) string {
+	if client != nil && client.ClientConfig().Backend == genai.BackendVertexAI {
+		return "vertex"
+	}
+	return "gemini-api"
+}
+
+func playerThinkingConfig() *genai.ThinkingConfig {
+	if level := strings.ToUpper(strings.TrimSpace(os.Getenv("GEMINI_PLAYER_THINKING_LEVEL"))); level != "" {
+		switch genai.ThinkingLevel(level) {
+		case genai.ThinkingLevelMinimal, genai.ThinkingLevelLow,
+			genai.ThinkingLevelMedium, genai.ThinkingLevelHigh:
+			return &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevel(level)}
+		}
+	}
+	budget := int32(192)
+	if raw := strings.TrimSpace(os.Getenv("GEMINI_PLAYER_THINKING_BUDGET")); raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 32); err == nil {
+			budget = int32(parsed)
+		}
+	}
+	return &genai.ThinkingConfig{ThinkingBudget: &budget}
+}

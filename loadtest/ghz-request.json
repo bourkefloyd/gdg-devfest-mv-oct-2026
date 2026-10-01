@@ -1,0 +1,5 @@
+{
+  "prompt": "Find words on this board: C A T S / T O N E / R A I L / S E E D",
+  "max_tokens": 120,
+  "temperature": 0.1
+}

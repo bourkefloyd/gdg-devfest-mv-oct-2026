@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="${HF_REPO:-google/gemma-4-E2B-it}"
+FILENAME="${HF_FILENAME:-model.safetensors}"
+DEST="${GEMMA_MODEL_DIR:-$HOME/projects/oxidizinggemma/models/gemma-4-e2b}"
+PARTS="${DOWNLOAD_PARTS:-16}"
+EXPECTED_SHA256="${EXPECTED_SHA256:-2db5482b20d746879bb3ef79b5203e9075a2e2b98f54ec7c2f281c1477ddc550}"
+URL="https://huggingface.co/$REPO/resolve/main/$FILENAME"
+PART_DIR="$DEST/.parts/$PARTS"
+
+if [[ -n "${HF_TOKEN:-}" ]]; then
+  token="$HF_TOKEN"
+elif [[ -f "$HOME/.cache/huggingface/token" ]]; then
+  token="$(<"$HOME/.cache/huggingface/token")"
+elif [[ -f "$HOME/projects/oxidizinggemma/.env" ]]; then
+  token="$(awk -F= '$1=="HF_TOKEN" {sub(/^HF_TOKEN=/, ""); print; exit}' \
+    "$HOME/projects/oxidizinggemma/.env")"
+else
+  echo "HF_TOKEN is not available" >&2
+  exit 2
+fi
+[[ -n "$token" ]] || { echo "HF_TOKEN is empty" >&2; exit 2; }
+
+mkdir -p "$PART_DIR"
+headers="$(mktemp)"
+auth_config="$(mktemp)"
+chmod 600 "$auth_config"
+printf 'header = "Authorization: Bearer %s"\n' "$token" > "$auth_config"
+unset token
+trap 'rm -f "$headers" "$auth_config"' EXIT
+curl --fail --silent --show-error --location \
+  --config "$auth_config" -r 0-0 -D "$headers" -o /dev/null "$URL"
+total="$(awk 'BEGIN{IGNORECASE=1} /^content-range:/ {print $3}' "$headers" |
+  tail -1 | tr -d '\r' | cut -d/ -f2)"
+[[ "$total" =~ ^[0-9]+$ ]] || { echo "could not determine model size" >&2; exit 1; }
+chunk=$(((total + PARTS - 1) / PARTS))
+echo "Downloading $total bytes in $PARTS resumable parts"
+
+pids=()
+for ((i=0; i<PARTS; i++)); do
+  start=$((i * chunk))
+  end=$((start + chunk - 1))
+  ((end >= total)) && end=$((total - 1))
+  part="$(printf '%s/%s.part.%03d' "$PART_DIR" "$FILENAME" "$i")"
+  existing=0
+  [[ -f "$part" ]] && existing="$(stat -f %z "$part")"
+  expected=$((end - start + 1))
+  if ((existing == expected)); then
+    continue
+  fi
+  ((existing < expected)) || { echo "$part is oversized" >&2; exit 1; }
+  (
+    # Validate a resumed tail so a previously interrupted/retried HTTP range
+    # cannot silently leave duplicated bytes in a part.
+    if ((existing > 0)); then
+      sample=$((existing < 64 ? existing : 64))
+      probe="$(mktemp)"
+      until curl --fail --silent --show-error --location --config "$auth_config" \
+          -r "$((start + existing - sample))-$((start + existing - 1))" \
+          -o "$probe" "$URL"; do
+        sleep 1
+      done
+      if ! cmp -s <(tail -c "$sample" "$part") "$probe"; then
+        echo "$part failed resume-tail verification; restarting it" >&2
+        : > "$part"
+      fi
+      rm -f "$probe"
+    fi
+
+    while :; do
+      existing="$(stat -f %z "$part")"
+      [[ "$existing" -eq "$expected" ]] && break
+      if ((existing > expected)); then
+        echo "$part became oversized; restarting it" >&2
+        : > "$part"
+        existing=0
+      fi
+      range_start=$((start + existing))
+      if ! curl --fail --silent --show-error --location \
+        --connect-timeout 20 --speed-limit 1024 --speed-time 60 \
+        --config "$auth_config" -r "$range_start-$end" "$URL" >> "$part"; then
+        sleep 1
+      fi
+    done
+  ) &
+  pids+=("$!")
+done
+
+failed=0
+for pid in "${pids[@]}"; do wait "$pid" || failed=1; done
+((failed == 0)) || exit 1
+
+tmp="$DEST/$FILENAME.assembling"
+: > "$tmp"
+for ((i=0; i<PARTS; i++)); do
+  part="$(printf '%s/%s.part.%03d' "$PART_DIR" "$FILENAME" "$i")"
+  cat "$part" >> "$tmp"
+done
+actual_sha="$(shasum -a 256 "$tmp" | awk '{print $1}')"
+[[ "$actual_sha" == "$EXPECTED_SHA256" ]] ||
+  { echo "SHA-256 mismatch: $actual_sha" >&2; exit 1; }
+mv "$tmp" "$DEST/$FILENAME"
+echo "Verified $DEST/$FILENAME ($actual_sha)"

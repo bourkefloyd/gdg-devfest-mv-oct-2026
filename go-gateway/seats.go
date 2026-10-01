@@ -18,19 +18,65 @@ import (
 	"google.golang.org/genai"
 )
 
-var geminiBreaker = router.NewCircuitBreaker()
+var (
+	geminiBreaker      = router.NewCircuitBreaker() // primary backend (Vertex when enabled)
+	apiBreaker         = router.NewCircuitBreaker() // Gemini API key failover tier
+	hostedGemmaBreaker = router.NewCircuitBreaker()
+	apiFailover        bool
+)
 
-// geminiReady reports whether the shared Gemini breaker admits calls.
-func geminiReady() bool { return geminiConfigured() && geminiBreaker.Allow() }
-
-func geminiConfigured() bool {
-	return os.Getenv("GEMINI_API_KEY") != "" || strings.EqualFold(os.Getenv("GOOGLE_GENAI_USE_VERTEXAI"), "true")
+// geminiReady reports whether any Gemini backend's breaker admits calls.
+func geminiReady() bool {
+	return geminiConfigured() && (geminiBreaker.Allow() || (apiFailover && apiBreaker.Allow()))
 }
+
+func vertexEnabled() bool {
+	v := os.Getenv("GOOGLE_GENAI_USE_VERTEXAI")
+	return strings.EqualFold(v, "true") || v == "1"
+}
+
+func geminiConfigured() bool { return os.Getenv("GEMINI_API_KEY") != "" || vertexEnabled() }
 
 // seatsFromEnv wires players per mode. PLAYERS=mock (default when no Gemini
 // credentials are set) uses deterministic mocks; PLAYERS=real uses Gemini and
 // the Gemma pool with the failover chain from the plan.
-func seatsFromEnv(log *slog.Logger, workers *pool.Pool) api.SeatFunc {
+type wiring struct {
+	seats, agentSeats api.SeatFunc
+	commentator       players.Commentator
+}
+
+// genaiBackends is the Gemini failover pair: Primary is Vertex when
+// GOOGLE_GENAI_USE_VERTEXAI=true (else the API key client); API is the
+// API-key failover tier, nil when it would duplicate Primary.
+type genaiBackends struct {
+	Primary, API               *genai.Client
+	PrimaryBreaker, APIBreaker *router.CircuitBreaker
+}
+
+func newBackends(ctx context.Context, log *slog.Logger) (genaiBackends, error) {
+	out := genaiBackends{PrimaryBreaker: geminiBreaker, APIBreaker: apiBreaker}
+	b, err := players.NewGenAIBackends(ctx)
+	if err != nil {
+		if !vertexEnabled() || os.Getenv("GEMINI_API_KEY") == "" {
+			return out, err
+		}
+		// Vertex misconfigured (e.g. no ADC): keep serving on the API key.
+		log.Warn("vertex unavailable; using Gemini API key only", "err", err)
+		c, apiErr := genai.NewClient(ctx, &genai.ClientConfig{Backend: genai.BackendGeminiAPI, APIKey: os.Getenv("GEMINI_API_KEY")})
+		if apiErr != nil {
+			return out, errors.Join(err, apiErr)
+		}
+		out.Primary = c
+		return out, nil
+	}
+	out.Primary = b.Primary
+	if b.API != nil && b.API != b.Primary {
+		out.API = b.API
+	}
+	return out, nil
+}
+
+func seatsFromEnv(log *slog.Logger, workers *pool.Pool) (w wiring) {
 	mode := env("PLAYERS", "")
 	if mode == "" {
 		mode = "mock"
@@ -41,36 +87,81 @@ func seatsFromEnv(log *slog.Logger, workers *pool.Pool) api.SeatFunc {
 	os.Setenv("PLAYERS", mode)
 	if mode != "real" {
 		log.Info("players: mock")
-		return api.MockSeats(time.Duration(envInt("MOCK_LATENCY_MS", 1000)) * time.Millisecond)
+		w.seats = api.MockSeats(time.Duration(envInt("MOCK_LATENCY_MS", 1000)) * time.Millisecond)
+		return w
 	}
 
-	client, err := players.NewGenAIClient(context.Background())
+	b, err := newBackends(context.Background(), log)
 	if err != nil {
 		log.Error("gemini client; falling back to mock players", "err", err)
-		return api.MockSeats(time.Second)
+		w.seats = api.MockSeats(time.Second)
+		return w
 	}
+	apiFailover = b.API != nil
+	log.Info("players: real", "gemini_primary", backendName(b.Primary), "api_key_failover", apiFailover,
+		"gemma_pool", workers != nil, "gemini_model", env("GEMINI_PLAYER_MODEL", "default"))
+	o := seatOpts{
+		Model:       os.Getenv("GEMINI_PLAYER_MODEL"),
+		LiteModel:   os.Getenv("GEMINI_FALLBACK_MODEL"),
+		GemmaModel:  env("GEMMA_MODEL", "gemma-4-e2b"),
+		HostedGemma: os.Getenv("GEMMA_HOSTED_MODEL"),
+	}
+	w.seats = realSeats(b, workers, o)
+	o.Agent = true
+	w.agentSeats = realSeats(b, workers, o)
+	w.commentator = players.NewGeminiCommentator(b.Primary, os.Getenv("GEMINI_COMMENTATOR_MODEL"))
+	return w
+}
+
+func backendName(c *genai.Client) string {
+	if c != nil && c.ClientConfig().Backend == genai.BackendVertexAI {
+		return "vertex"
+	}
+	return "gemini-api"
+}
+
+type seatOpts struct {
+	Model, LiteModel, GemmaModel string
+	HostedGemma                  string // empty disables the hosted Gemma tier
+	Agent                        bool   // Gemini seat uses the submit_words agent loop
+}
+
+func realSeats(b genaiBackends, workers *pool.Pool, o seatOpts) api.SeatFunc {
 	dict := wordhunt.Default()
-	gemini := func(model string) players.Player {
-		return &router.BreakerPlayer{Breaker: geminiBreaker,
-			Player: &router.RetryPlayer{Player: players.NewGeminiPlayer(client, model), Attempts: 3, Retryable: retryableGemini}}
+	wrap := func(p players.Player, br *router.CircuitBreaker) players.Player {
+		return &router.BreakerPlayer{Breaker: br,
+			Player: &router.RetryPlayer{Player: p, Attempts: 3, Retryable: retryableGemini}}
 	}
-	geminiChain := []players.Player{gemini(os.Getenv("GEMINI_PLAYER_MODEL"))}
-	var spill players.Player
-	if lite := os.Getenv("GEMINI_FALLBACK_MODEL"); lite != "" {
-		spill = gemini(lite)
-		geminiChain = append(geminiChain, spill)
-	} else {
-		spill = gemini(os.Getenv("GEMINI_PLAYER_MODEL"))
+	// tiers returns the model on Vertex (or the sole backend), then on the API key.
+	tiers := func(model string) []players.Player {
+		t := []players.Player{wrap(players.NewGeminiPlayer(b.Primary, model), b.PrimaryBreaker)}
+		if b.API != nil {
+			t = append(t, wrap(players.NewGeminiPlayer(b.API, model), b.APIBreaker))
+		}
+		return t
+	}
+
+	var geminiChain []players.Player
+	if o.Agent {
+		geminiChain = append(geminiChain, &router.BreakerPlayer{Breaker: b.PrimaryBreaker, Player: players.NewGeminiAgent(b.Primary, o.Model, dict)})
+	}
+	geminiChain = append(geminiChain, tiers(o.Model)...)
+	spill := tiers(o.Model)
+	if o.LiteModel != "" {
+		spill = tiers(o.LiteModel)
+		geminiChain = append(geminiChain, spill...)
 	}
 	geminiChain = append(geminiChain, &players.SolverPlayer{Dict: dict, Limit: 6})
 
 	var gemmaChain []players.Player
 	if workers != nil {
-		gemmaChain = append(gemmaChain, &poolGemma{pool: workers, model: env("GEMMA_MODEL", "gemma-4-e2b")})
+		gemmaChain = append(gemmaChain, &poolGemma{pool: workers, model: o.GemmaModel})
 	}
-	gemmaChain = append(gemmaChain, spill, &players.SolverPlayer{Dict: dict, Limit: 3})
+	if o.HostedGemma != "" {
+		gemmaChain = append(gemmaChain, wrap(players.NewHostedGemmaPlayer(b.Primary, o.HostedGemma), hostedGemmaBreaker))
+	}
+	gemmaChain = append(gemmaChain, labeledFallback{&router.FallbackPlayer{Chain: spill}}, &players.SolverPlayer{Dict: dict, Limit: 3})
 
-	log.Info("players: real", "gemma_pool", workers != nil, "gemini_model", env("GEMINI_PLAYER_MODEL", "default"))
 	return func(m string) ([]players.Player, error) {
 		g := &router.FallbackPlayer{NameLabel: "gemini", Chain: geminiChain}
 		if m == api.ModeHuman {
@@ -78,6 +169,16 @@ func seatsFromEnv(log *slog.Logger, workers *pool.Pool) api.SeatFunc {
 		}
 		return []players.Player{g, &router.FallbackPlayer{NameLabel: "gemma", Chain: gemmaChain}}, nil
 	}
+}
+
+// labeledFallback marks results as fallback even when it heads the chain, so
+// Gemma's seat served by Gemini (no local pool) is never shown as Gemma.
+type labeledFallback struct{ players.Player }
+
+func (l labeledFallback) Play(ctx context.Context, b wordhunt.Board, deadline time.Time) (players.Result, error) {
+	res, err := l.Player.Play(ctx, b, deadline)
+	res.Fallback = true
+	return res, err
 }
 
 // retryableGemini follows the plan: retry 429/500/503 and deadlines, never 4xx.
