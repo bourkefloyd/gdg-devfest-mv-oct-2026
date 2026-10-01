@@ -23,9 +23,13 @@ fi
 
 mkdir -p "$DEST/.parts"
 headers="$(mktemp)"
-trap 'rm -f "$headers"' EXIT
+auth_config="$(mktemp)"
+chmod 600 "$auth_config"
+printf 'header = "Authorization: Bearer %s"\n' "$token" > "$auth_config"
+unset token
+trap 'rm -f "$headers" "$auth_config"' EXIT
 curl --fail --silent --show-error --location \
-  -H "Authorization: Bearer $token" -r 0-0 -D "$headers" -o /dev/null "$URL"
+  --config "$auth_config" -r 0-0 -D "$headers" -o /dev/null "$URL"
 total="$(awk 'BEGIN{IGNORECASE=1} /^content-range:/ {print $3}' "$headers" |
   tail -1 | tr -d '\r' | cut -d/ -f2)"
 [[ "$total" =~ ^[0-9]+$ ]] || { echo "could not determine model size" >&2; exit 1; }
@@ -50,7 +54,7 @@ for ((i=0; i<PARTS; i++)); do
     curl --fail --silent --show-error --location \
       --retry 20 --retry-all-errors --connect-timeout 20 \
       --speed-limit 1024 --speed-time 60 \
-      -H "Authorization: Bearer $token" \
+      --config "$auth_config" \
       -r "$range_start-$end" "$URL" >> "$part"
     actual="$(stat -f %z "$part")"
     [[ "$actual" -eq "$expected" ]] ||
