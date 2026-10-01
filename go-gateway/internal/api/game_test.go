@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -24,7 +25,7 @@ func TestRaceFlowOverSSE(t *testing.T) {
 	e := newEnv(t, nil)
 	g := e.create(keyA, map[string]any{"mode": "race", "duration_s": 5, "seed": 7})
 	id := g["game_id"].(string)
-	if len(g["tiles"].(string)) != 16 || len(g["players"].([]any)) != 2 {
+	if !wordRE.MatchString(strings.ToLower(g["tiles"].(string))) || len(g["tiles"].(string)) != 16 || len(g["players"].([]any)) != 2 {
 		t.Fatalf("bad create response: %v", g)
 	}
 	evs := e.readEvents(e.ts.URL+"/v1/games/"+id+"/events", bearerHeader(keyA), 10*time.Second)

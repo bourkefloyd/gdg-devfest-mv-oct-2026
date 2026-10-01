@@ -185,6 +185,11 @@ func (g *Game) claimLocked(p *playerState, raw string, path []int, now time.Time
 	case p.seen[word]:
 		return reject(wordhunt.ReasonDuplicate)
 	}
+	for _, i := range path {
+		if i < 0 || i >= wordhunt.NumTiles {
+			return reject(wordhunt.ReasonBadIndex)
+		}
+	}
 	if ok, reason := wordhunt.ValidateWord(g.Board, g.dict, word, path); !ok {
 		return reject(reason)
 	}

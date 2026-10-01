@@ -116,6 +116,7 @@ type Server struct {
 	keys   *keyring
 	limits *limiters
 	store  *store
+	mounts []mount
 	wg     sync.WaitGroup // running games
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -155,11 +156,48 @@ func (s *Server) Handler() http.Handler {
 	// browser EventSource cannot send an Authorization header.
 	mux.Handle("GET /v1/games/{id}/events", s.streamAuth(s.rateLimit(bucketRead, http.HandlerFunc(s.handleEvents))))
 
+	for _, m := range s.mounts {
+		h := m.h
+		if !m.public {
+			h = s.requireKey(s.rateLimit(m.bucket, h))
+		}
+		mux.Handle(m.pattern, instrument(m.pattern, h))
+	}
+
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "no such route")
 	})
 	return recoverer(s.cfg.Logger, s.cors(securityHeaders(mux)))
 }
+
+type mount struct {
+	pattern, bucket string
+	public          bool
+	h               http.Handler
+}
+
+// Rate-limit buckets available to mounted routes.
+const (
+	BucketCreate = bucketCreate
+	BucketWord   = bucketWord
+	BucketRead   = bucketRead
+)
+
+// Mount registers an extra route (Go 1.22 pattern, e.g. "POST /v1/arena")
+// behind bearer auth and the given per-key rate-limit bucket, with the same
+// CORS, security headers, metrics and recovery as built-in routes. Call it
+// before Handler.
+func (s *Server) Mount(pattern, bucket string, h http.Handler) {
+	s.mounts = append(s.mounts, mount{pattern: pattern, bucket: bucket, h: h})
+}
+
+// MountPublic registers an extra unauthenticated route (dashboards, probes).
+func (s *Server) MountPublic(pattern string, h http.Handler) {
+	s.mounts = append(s.mounts, mount{pattern: pattern, public: true, h: h})
+}
+
+// KeyID returns the caller's non-reversible API key ID inside mounted handlers.
+func KeyID(ctx context.Context) string { return keyID(ctx) }
 
 // Shutdown stops accepting game work, waits up to ctx for running games to
 // finish, then cancels whatever is left.
