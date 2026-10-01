@@ -236,8 +236,13 @@ function GameBoard({ game, now, runStartedAt, preview }: { game: ArenaGame; now:
 }
 
 function Results({ state, onClose, onRestart, onNewBoard }: { state: ArenaState; onClose: () => void; onRestart: () => void; onNewBoard: () => void }) {
-  const ranked = [...state.games].sort((a, b) => b.score - a.score || (a.timeToScoreMs ?? Infinity) - (b.timeToScoreMs ?? Infinity));
-  const groups = Object.values(ranked.reduce<Record<string, { name: string; games: number; score: number; words: number; latency: number; errors: number }>>((all, game) => {
+  const [tab, setTab] = useState<"complete" | "incomplete" | "all">("complete");
+  const eligible = state.games.filter((game) => !isSolverRow(game));
+  const complete = eligible.filter(isCompleteSeat);
+  const incomplete = eligible.filter((game) => !isCompleteSeat(game));
+  const ranked = [...(tab === "complete" ? complete : tab === "incomplete" ? incomplete : eligible)]
+    .sort((a, b) => b.score - a.score || (a.timeToScoreMs ?? Infinity) - (b.timeToScoreMs ?? Infinity));
+  const groups = Object.values(complete.reduce<Record<string, { name: string; games: number; score: number; words: number; latency: number; errors: number }>>((all, game) => {
     const name = game.profile ?? "Unknown profile";
     const group = all[name] ??= { name, games: 0, score: 0, words: 0, latency: 0, errors: 0 };
     group.games++; group.score += game.score; group.words += game.words; group.latency += game.latencyMs ?? 0; group.errors += game.error ? 1 : 0;
@@ -251,8 +256,14 @@ function Results({ state, onClose, onRestart, onNewBoard }: { state: ArenaState;
           <div><span>Run complete</span><h2 id="results-title">Arena leaderboard</h2><p>{state.games.length} games · {state.games.reduce((sum, game) => sum + game.words, 0)} verified words</p></div>
           <button className="close" onClick={onClose} aria-label="Close results"><X size={20} /></button>
         </div>
+        <div className="results-tabs">
+          <button className={tab === "complete" ? "active" : ""} onClick={() => setTab("complete")}>Complete <b>{complete.length}</b></button>
+          <button className={tab === "incomplete" ? "active" : ""} onClick={() => setTab("incomplete")}>Incomplete <b>{incomplete.length}</b></button>
+          <button className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>All <b>{eligible.length}</b></button>
+        </div>
         <div className="profile-groups">
           {groups.map((group) => <div key={group.name}><strong>{group.name}</strong><span>avg {Math.round(group.score / group.games).toLocaleString()} pts · {(group.words / group.games).toFixed(1)} words · {formatLatency(group.latency / group.games)} · {group.errors} errors</span></div>)}
+          <div><strong>Incomplete seats</strong><span>{incomplete.length} excluded from profile averages</span></div>
         </div>
         <div className="leaderboard-head"><span>Rank / agent</span><span>Model / backend</span><span>Score / perfect</span><span>Words</span><span>Time</span></div>
         <div className="leaderboard">
@@ -280,6 +291,14 @@ function formatTimer(ms: number) {
 function formatLatency(ms: number) {
   if (!ms) return "—";
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${Math.round(ms)}ms`;
+}
+
+function isCompleteSeat(game: ArenaGame) {
+  return game.status === "finished" && !game.error && game.backend !== "—" && game.model !== "Awaiting model";
+}
+
+function isSolverRow(game: ArenaGame) {
+  return game.backend === "in-process" || /solver bot|trie-dfs/i.test(`${game.model} ${game.profile ?? ""}`);
 }
 
 function parseSeed(value: string) {

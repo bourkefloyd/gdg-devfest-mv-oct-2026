@@ -222,6 +222,10 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .results-head h2 { margin: 3px 0 1px; font-size: 22px; letter-spacing: -.04em; }
 .results-head p { margin: 0; color: #718077; font-size: 9px; }
 .close { margin-left: auto; align-self: flex-start; padding: 6px; border: 0; color: #89958c; background: transparent; }
+.results-tabs { display: flex; gap: 5px; padding: 9px 20px; border-bottom: 1px solid rgba(255,255,255,.07); }
+.results-tabs button { padding: 6px 10px; border: 1px solid rgba(255,255,255,.08); border-radius: 8px; color: #829087; background: transparent; font-size: 8px; font-weight: 700; }
+.results-tabs button.active { color: #142216; background: #a9ef75; }
+.results-tabs b { margin-left: 4px; }
 .profile-groups { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1px; background: rgba(255,255,255,.06); }
 .profile-groups > div { display: flex; flex-direction: column; gap: 3px; padding: 9px 20px; background: #12251a; }
 .profile-groups strong { font-size: 9px; color: #d5e9cb; }
