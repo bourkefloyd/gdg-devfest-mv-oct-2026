@@ -773,6 +773,20 @@ function reduceEvent(game: ArenaGame, event: ArenaEvent): ArenaGame {
     return { ...game, commentary: [...game.commentary, event.text].slice(-5) };
   }
   if (event.type === "game_over") {
+    if (event.game) {
+      const players = Object.fromEntries(
+        Object.entries(event.game.players).map(([id, player]) => [
+          id,
+          { ...player, status: "finished" as const },
+        ]),
+      );
+      return {
+        ...event.game,
+        commentary: game.commentary,
+        status: "finished",
+        players,
+      };
+    }
     const players = Object.fromEntries(
       Object.entries(game.players).map(([id, player]) => [
         id,

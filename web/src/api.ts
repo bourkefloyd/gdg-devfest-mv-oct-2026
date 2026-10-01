@@ -54,7 +54,7 @@ export type ArenaEvent =
       score?: number;
     }
   | { type: "commentary"; text: string }
-  | { type: "game_over"; max_score?: number };
+  | { type: "game_over"; max_score?: number; game?: ArenaGame };
 
 export type CreateGameInput = {
   mode: "race" | "human_vs_gemini";
@@ -76,18 +76,40 @@ function authHeaders() {
 }
 
 function parsePlayer(raw: unknown, fallbackId: PlayerId): ArenaPlayer {
+  if (typeof raw === "string") {
+    const id = playerId(raw, fallbackId);
+    return {
+      id,
+      name: title(id),
+      backend: id === "gemini" ? "Vertex AI" : id === "human" ? "Human input" : "Local Metal",
+      model: id === "gemini" ? "Gemini Flash" : id === "human" ? "Drag to play" : "Gemma 4 E2B",
+      fallback: false,
+      score: 0,
+      accepted: [],
+      rejected: [],
+      status: "waiting",
+    };
+  }
   const value = (raw ?? {}) as Record<string, unknown>;
-  const id = String(value.id ?? value.name ?? fallbackId).toLowerCase() as PlayerId;
+  const id = playerId(value.id ?? value.name, fallbackId);
+  const status = String(value.status ?? "waiting");
   return {
     id,
-    name: String(value.display_name ?? value.name ?? title(id)),
+    name: String(
+      value.display_name ?? (id === "human" ? "You" : title(id)),
+    ),
     backend: String(value.backend ?? (id === "gemini" ? "Vertex AI" : "Local Metal")),
     model: String(value.model ?? (id === "gemini" ? "Gemini 2.5 Flash" : "Gemma 4 E2B")),
     fallback: Boolean(value.fallback),
     score: Number(value.score ?? value.total ?? 0),
     accepted: strings(value.accepted ?? value.words),
     rejected: rejected(value.rejected),
-    status: (value.status as ArenaPlayer["status"]) ?? "waiting",
+    status:
+      status === "playing"
+        ? "thinking"
+        : status === "done" || status === "error"
+          ? "finished"
+          : (status as ArenaPlayer["status"]),
     latencyMs: numberOrUndefined(value.latency_ms ?? value.latencyMs),
   };
 }
@@ -121,6 +143,14 @@ function numberOrUndefined(value: unknown) {
 
 function title(value: string) {
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function playerId(value: unknown, fallback: PlayerId = "gemma"): PlayerId {
+  const normalized = String(value ?? "").toLowerCase();
+  if (normalized.includes("gemini")) return "gemini";
+  if (normalized.includes("human")) return "human";
+  if (normalized.includes("gemma")) return "gemma";
+  return fallback;
 }
 
 export function normalizeGame(raw: unknown, input?: CreateGameInput): ArenaGame {
@@ -158,7 +188,9 @@ export function normalizeGame(raw: unknown, input?: CreateGameInput): ArenaGame 
     maxScore: Number(value.max_score ?? value.max_possible_score ?? 0),
     players,
     commentary: strings(value.commentary),
-    status: (value.status as ArenaGame["status"]) ?? "ready",
+    status: Boolean(value.over)
+      ? "finished"
+      : ((value.status as ArenaGame["status"]) ?? "ready"),
   };
 }
 
@@ -270,10 +302,7 @@ async function streamEvents(
         if (!data.length) continue;
         try {
           const payload = JSON.parse(data.join("\n")) as Record<string, unknown>;
-          onEvent({
-            ...payload,
-            type: String(payload.type ?? eventName ?? "state"),
-          } as ArenaEvent);
+          onEvent(normalizeArenaEvent(eventName, payload));
         } catch {
           if (eventName === "commentary") {
             onEvent({ type: "commentary", text: data.join("\n") });
@@ -287,6 +316,58 @@ async function streamEvents(
       onConnection?.(false);
     }
   }
+}
+
+export function normalizeArenaEvent(
+  eventName: string,
+  payload: Record<string, unknown>,
+): ArenaEvent {
+  const type = String(payload.type ?? eventName ?? "state");
+  if (type === "player_started") {
+    return { type, player: playerId(payload.player) };
+  }
+  if (type === "word") {
+    return {
+      type,
+      player: playerId(payload.player),
+      word: String(payload.word ?? ""),
+      accepted: Boolean(payload.accepted),
+      reason: payload.reason ? String(payload.reason) : undefined,
+      points: numberOrUndefined(payload.points),
+      total: numberOrUndefined(payload.total),
+    };
+  }
+  if (type === "player_result") {
+    return {
+      type,
+      player: playerId(payload.player),
+      backend: payload.backend ? String(payload.backend) : undefined,
+      model: payload.model ? String(payload.model) : undefined,
+      fallback:
+        typeof payload.fallback === "boolean" ? payload.fallback : undefined,
+      latency_ms: numberOrUndefined(payload.latency_ms),
+      score: numberOrUndefined(payload.score),
+      // The gateway result event carries accepted/rejected counts. Individual
+      // word events and the final state carry the actual lists.
+      accepted: Array.isArray(payload.accepted)
+        ? strings(payload.accepted)
+        : undefined,
+      rejected: Array.isArray(payload.rejected)
+        ? rejected(payload.rejected)
+        : undefined,
+    };
+  }
+  if (type === "commentary") {
+    return { type, text: String(payload.text ?? "") };
+  }
+  if (type === "game_over") {
+    return {
+      type,
+      max_score: numberOrUndefined(payload.max_score),
+      game: normalizeGame(payload),
+    };
+  }
+  return { type: "state", game: normalizeGame(payload) };
 }
 
 function makeMockGame(input: CreateGameInput): ArenaGame {
