@@ -5,8 +5,8 @@ be filled after the Gemma weights finish downloading.
 
 ## Test environment
 
-- Load harness: `631d683` (`track-e`)
-- S1 gateway candidate: `3e5cccf` (`track-c`, tests green before the run)
+- Load harness: `4831a79` (`track-e`, latest `main` merged)
+- Gateway: `df29dec` (`main`, complete Go and Rust builds green)
 - Host: MacBook Pro (Mac17,7), Apple M5 Max, 64 GB RAM
 - Go: 1.27.1 (`darwin/arm64`)
 - Rust: 1.99.0
@@ -19,13 +19,13 @@ be filled after the Gemma weights finish downloading.
 
 | Scenario | Load | Throughput | Latency / errors | Result |
 |---|---:|---:|---|---|
-| S1 gateway capacity | 1,000 VUs, 21,000 requests/run | 2,798 req/s median; ~8,000 games/min | create p50/p95/p99 0.279/0.598/1.073 ms; submit 0.125/0.333/0.671 ms; 0 unexpected errors | pass |
+| S1 gateway capacity | 1,000 VUs, 21,000 requests/run | 2,799 req/s median; ~8,000 games/min | create p50/p95/p99 0.284/0.623/1.069 ms; submit 0.127/0.341/0.707 ms; 0 unexpected errors | pass |
 | S2 real hybrid | pending model integration | — | — | pending |
 | S3 mock worker pool | 1 worker, 40 calls | 9.82 req/s | 4.072 s wall time | baseline |
 | S3 mock worker pool | 2 workers, 80 calls | 19.65 req/s | 4.071 s wall time | 2.00x baseline |
 | S3 mock worker pool | 4 workers, 160 calls | 39.31 req/s | 4.070 s wall time | 4.00x baseline |
 | S3 real Metal worker | c=1/4/8 | — | — | pending weights |
-| S4 abuse isolation | 200 req/s attacker + 1 req/s normal key | 201 req/s aggregate | 99.0% attacker 429; normal p95 0.750 ms vs 1.170 ms baseline; zero 5xx | pass |
+| S4 abuse isolation | 200 req/s attacker + 1 req/s normal key | 201 req/s aggregate | 99.0% attacker 429; normal p95 0.378 ms vs 0.637 ms baseline; zero 5xx | pass |
 
 ```mermaid
 xychart-beta
@@ -50,9 +50,9 @@ measured separately in S2 rather than folded into S1 request latency.
 
 ## S4 notes
 
-The normal key's create p95 improved from 1.170 ms at baseline to 0.750 ms
+The normal key's create p95 improved from 0.637 ms at baseline to 0.378 ms
 while a separate key flooded at 200 requests/s, comfortably within the target
-of no more than a 20% regression. The attacker received 429 on 1,981 of 2,001
+of no more than a 20% regression. The attacker received 429 on 1,980 of 2,000
 requests (99.0%), while the normal player continued at 1 game/s. No request
 returned 5xx.
 
