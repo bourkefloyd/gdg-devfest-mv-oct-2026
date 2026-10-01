@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@eslint/js": "latest",
-    "@tailwindcss/vite": "latest",
+    "@tailwindcss/postcss": "latest",
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
