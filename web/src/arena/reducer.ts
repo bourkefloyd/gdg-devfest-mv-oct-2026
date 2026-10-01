@@ -82,13 +82,22 @@ function reduceServerEvent(state: ArenaState, event: NormalizedArenaEvent): Aren
     }));
   }
   if (["word", "word_found", "word_accepted", "score"].includes(type)) {
-    return updateGame(state, payload, (game) => ({
-      ...hydrateGame(game, payload),
-      status: game.status === "queued" ? "running" : game.status,
-      words: number(payload.words ?? payload.word_count ?? payload.total_words) ?? game.words + (payload.accepted === false ? 0 : 1),
-      score: number(payload.score ?? payload.total_score ?? payload.total) ?? game.score + (number(payload.points) ?? 0),
-      currentWord: text(payload.word) ?? game.currentWord,
-    }));
+    return updateGame(state, payload, (game) => {
+      const word = text(payload.word) ?? game.currentWord;
+      return {
+        ...hydrateGame(game, payload),
+        status: game.status === "queued" ? "running" : game.status,
+        words: number(payload.words ?? payload.word_count ?? payload.total_words) ?? game.words + (payload.accepted === false ? 0 : 1),
+        score: number(payload.score ?? payload.total_score ?? payload.total) ?? game.score + (number(payload.points) ?? 0),
+        currentWord: word,
+        swipe: {
+          path: numberArray(payload.path ?? payload.indices ?? payload.tiles) ?? game.swipe.path,
+          word,
+          color: text(payload.color) ?? game.swipe.color,
+          updatedAt: Date.now(),
+        },
+      };
+    });
   }
   if (["game_updated", "game_update", "progress"].includes(type)) {
     return updateGame(state, payload, (game) => hydrateGame(game, payload));
