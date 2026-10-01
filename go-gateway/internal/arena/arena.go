@@ -8,6 +8,7 @@ package arena
 import (
 	"context"
 	"crypto/rand"
+	"encoding/binary"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -29,6 +30,7 @@ var (
 	ErrInvalidGameCount = errors.New("game count must be positive")
 	ErrTooManyGames     = errors.New("game count exceeds the configured cap")
 	ErrInvalidDuration  = errors.New("duration is outside the configured range")
+	ErrInvalidPlayerMix = errors.New("player mix must be bots, gemini, or mixed")
 	ErrRunNotFound      = errors.New("arena run not found")
 	ErrTooManyStreams   = errors.New("too many event streams for arena run")
 )
@@ -44,11 +46,12 @@ const (
 
 // GameSpec is passed to PlayerFactory once for every game.
 type GameSpec struct {
-	RunID    string
-	GameID   string
-	Index    int
-	Board    wordhunt.Board
-	Duration time.Duration
+	RunID     string
+	GameID    string
+	Index     int
+	Board     wordhunt.Board
+	Duration  time.Duration
+	PlayerMix string
 }
 
 // PlayerFactory may provide API-backed players. It must be safe for concurrent
@@ -68,8 +71,10 @@ type Config struct {
 	MaxSubscribers   int
 	SubscriberBuffer int
 	WordsPerGame     int
+	MaxReal          int
 	Dictionary       *wordhunt.Dict
 	PlayerFactory    PlayerFactory
+	RealFactory      PlayerFactory
 	Now              func() time.Time
 }
 
@@ -80,6 +85,8 @@ type StartRequest struct {
 	Duration   time.Duration `json:"-"`
 	DurationMS int64         `json:"duration_ms,omitempty"`
 	DurationS  float64       `json:"duration_s,omitempty"`
+	PlayerMix  string        `json:"player_mix,omitempty"`
+	Seed       *int64        `json:"seed,omitempty"`
 }
 
 // StartResponse is safe to return directly to a React client.
@@ -90,6 +97,9 @@ type StartResponse struct {
 	DurationMS int64     `json:"duration_ms"`
 	StartedAt  time.Time `json:"started_at"`
 	EventsURL  string    `json:"events_url"`
+	PlayerMix  string    `json:"player_mix"`
+	Seed       int64     `json:"seed"`
+	Tiles      string    `json:"tiles"`
 }
 
 // Stats is a race-safe point-in-time aggregate for a run.
@@ -106,24 +116,27 @@ type Stats struct {
 
 // LeaderboardEntry is one completed game, sorted by score on final events.
 type LeaderboardEntry struct {
-	GameID    string   `json:"game_id"`
-	Name      string   `json:"name"`
-	Backend   string   `json:"backend"`
-	Model     string   `json:"model"`
-	Score     int      `json:"score"`
-	Words     []string `json:"words"`
-	WordCount int      `json:"word_count"`
-	LatencyMS float64  `json:"latency_ms"`
-	Fallback  bool     `json:"fallback,omitempty"`
-	Error     string   `json:"error,omitempty"`
+	GameID        string   `json:"game_id"`
+	Name          string   `json:"name"`
+	Backend       string   `json:"backend"`
+	Model         string   `json:"model"`
+	Score         int      `json:"score"`
+	Words         []string `json:"words"`
+	WordCount     int      `json:"word_count"`
+	LatencyMS     float64  `json:"latency_ms"`
+	Fallback      bool     `json:"fallback,omitempty"`
+	Error         string   `json:"error,omitempty"`
+	PerfectScore  int      `json:"perfect_score"`
+	TimeToScoreMS float64  `json:"time_to_score_ms"`
 }
 
 // Game describes a live board.
 type Game struct {
-	ID         string `json:"id"`
-	Index      int    `json:"index"`
-	Tiles      string `json:"tiles"`
-	PlayerName string `json:"player_name"`
+	ID           string `json:"id"`
+	Index        int    `json:"index"`
+	Tiles        string `json:"tiles"`
+	PlayerName   string `json:"player_name"`
+	PerfectScore int    `json:"perfect_score"`
 }
 
 // Word describes a validated word and its row-major tile path.
@@ -168,6 +181,9 @@ type Snapshot struct {
 	FinishedAt  *time.Time         `json:"finished_at,omitempty"`
 	Stats       Stats              `json:"stats"`
 	Leaderboard []LeaderboardEntry `json:"leaderboard"`
+	PlayerMix   string             `json:"player_mix"`
+	Seed        int64              `json:"seed"`
+	Tiles       string             `json:"tiles"`
 }
 
 // Manager coordinates runs and implements http.Handler in http.go.
@@ -184,11 +200,15 @@ type Manager struct {
 // Run is a single load-test tournament. Use Snapshot or Subscribe to inspect
 // it; its mutable fields are intentionally private.
 type Run struct {
-	manager  *Manager
-	id       string
-	n        int
-	duration time.Duration
-	started  time.Time
+	manager      *Manager
+	id           string
+	n            int
+	duration     time.Duration
+	playerMix    string
+	seed         int64
+	board        wordhunt.Board
+	perfectScore int
+	started      time.Time
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -262,6 +282,11 @@ func withDefaults(cfg Config) Config {
 	} else if cfg.WordsPerGame > 150 {
 		cfg.WordsPerGame = 150
 	}
+	if cfg.MaxReal <= 0 {
+		cfg.MaxReal = 8
+	} else if cfg.MaxReal > cfg.MaxGames {
+		cfg.MaxReal = cfg.MaxGames
+	}
 	if cfg.Dictionary == nil {
 		cfg.Dictionary = wordhunt.Default()
 	}
@@ -269,8 +294,11 @@ func withDefaults(cfg Config) Config {
 		cfg.Now = time.Now
 	}
 	if cfg.PlayerFactory == nil {
-		dict, limit := cfg.Dictionary, cfg.WordsPerGame
-		cfg.PlayerFactory = func(_ context.Context, spec GameSpec) (players.Player, error) {
+		dict, limit, maxReal, realFactory := cfg.Dictionary, cfg.WordsPerGame, cfg.MaxReal, cfg.RealFactory
+		cfg.PlayerFactory = func(ctx context.Context, spec GameSpec) (players.Player, error) {
+			if useReal(spec.PlayerMix, spec.Index, maxReal) && realFactory != nil {
+				return realFactory(ctx, spec)
+			}
 			return &pacedSolverPlayer{
 				inner: &players.SolverPlayer{Dict: dict, Limit: limit},
 				delay: 180*time.Millisecond + time.Duration(spec.Index%9)*45*time.Millisecond,
@@ -280,7 +308,16 @@ func withDefaults(cfg Config) Config {
 	return cfg
 }
 
-func (m *Manager) validate(req StartRequest) (int, time.Duration, error) {
+func useReal(mix string, index, limit int) bool {
+	switch mix {
+	case "gemini", "mixed":
+		return index < limit
+	default:
+		return false
+	}
+}
+
+func (m *Manager) validate(req StartRequest) (int, time.Duration, string, error) {
 	n := req.N
 	if n == 0 {
 		n = req.Count
@@ -289,21 +326,21 @@ func (m *Manager) validate(req StartRequest) (int, time.Duration, error) {
 		n = m.cfg.DefaultGames
 	}
 	if n < 0 {
-		return 0, 0, ErrInvalidGameCount
+		return 0, 0, "", ErrInvalidGameCount
 	}
 	if n > m.cfg.MaxGames {
-		return 0, 0, fmt.Errorf("%w: maximum is %d", ErrTooManyGames, m.cfg.MaxGames)
+		return 0, 0, "", fmt.Errorf("%w: maximum is %d", ErrTooManyGames, m.cfg.MaxGames)
 	}
 	duration := req.Duration
 	if duration == 0 && req.DurationMS != 0 {
 		if req.DurationMS < 0 || req.DurationMS > m.cfg.MaxDuration.Milliseconds() {
-			return 0, 0, fmt.Errorf("%w: use %s through %s", ErrInvalidDuration, m.cfg.MinDuration, m.cfg.MaxDuration)
+			return 0, 0, "", fmt.Errorf("%w: use %s through %s", ErrInvalidDuration, m.cfg.MinDuration, m.cfg.MaxDuration)
 		}
 		duration = time.Duration(req.DurationMS) * time.Millisecond
 	}
 	if duration == 0 && req.DurationS != 0 {
 		if req.DurationS < 0 || req.DurationS != req.DurationS || req.DurationS > m.cfg.MaxDuration.Seconds() {
-			return 0, 0, fmt.Errorf("%w: use %s through %s", ErrInvalidDuration, m.cfg.MinDuration, m.cfg.MaxDuration)
+			return 0, 0, "", fmt.Errorf("%w: use %s through %s", ErrInvalidDuration, m.cfg.MinDuration, m.cfg.MaxDuration)
 		}
 		duration = time.Duration(req.DurationS * float64(time.Second))
 	}
@@ -311,14 +348,21 @@ func (m *Manager) validate(req StartRequest) (int, time.Duration, error) {
 		duration = m.cfg.DefaultDuration
 	}
 	if duration < m.cfg.MinDuration || duration > m.cfg.MaxDuration {
-		return 0, 0, fmt.Errorf("%w: use %s through %s", ErrInvalidDuration, m.cfg.MinDuration, m.cfg.MaxDuration)
+		return 0, 0, "", fmt.Errorf("%w: use %s through %s", ErrInvalidDuration, m.cfg.MinDuration, m.cfg.MaxDuration)
 	}
-	return n, duration, nil
+	mix := strings.ToLower(strings.TrimSpace(req.PlayerMix))
+	if mix == "" {
+		mix = "mixed"
+	}
+	if mix != "bots" && mix != "gemini" && mix != "mixed" {
+		return 0, 0, "", ErrInvalidPlayerMix
+	}
+	return n, duration, mix, nil
 }
 
 // Start cancels and drains the active run before starting a replacement.
 func (m *Manager) Start(req StartRequest) (*Run, error) {
-	n, duration, err := m.validate(req)
+	n, duration, mix, err := m.validate(req)
 	if err != nil {
 		return nil, err
 	}
@@ -335,20 +379,33 @@ func (m *Manager) Start(req StartRequest) (*Run, error) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	seed := randomSeed()
+	if req.Seed != nil {
+		seed = *req.Seed
+	}
+	board := wordhunt.NewBoard(seed, 20)
+	perfectScore := 0
+	for _, word := range board.Solve(m.cfg.Dictionary) {
+		perfectScore += wordhunt.Score(word)
+	}
 	run := &Run{
-		manager:     m,
-		id:          newID(),
-		n:           n,
-		duration:    duration,
-		started:     m.cfg.Now().UTC(),
-		ctx:         ctx,
-		cancel:      cancel,
-		done:        make(chan struct{}),
-		status:      StatusRunning,
-		latencies:   make([]float64, 0, n),
-		leaderboard: make([]LeaderboardEntry, 0, n),
-		events:      make([]Event, 0, min(m.cfg.MaxEvents, n*(m.cfg.WordsPerGame+3)+2)),
-		subscribers: make(map[chan Event]struct{}),
+		manager:      m,
+		id:           newID(),
+		n:            n,
+		duration:     duration,
+		playerMix:    mix,
+		seed:         seed,
+		board:        board,
+		perfectScore: perfectScore,
+		started:      m.cfg.Now().UTC(),
+		ctx:          ctx,
+		cancel:       cancel,
+		done:         make(chan struct{}),
+		status:       StatusRunning,
+		latencies:    make([]float64, 0, n),
+		leaderboard:  make([]LeaderboardEntry, 0, n),
+		events:       make([]Event, 0, min(m.cfg.MaxEvents, n*(m.cfg.WordsPerGame+3)+2)),
+		subscribers:  make(map[chan Event]struct{}),
 	}
 
 	m.mu.Lock()
@@ -417,6 +474,9 @@ func (r *Run) StartResponse() StartResponse {
 		DurationMS: r.duration.Milliseconds(),
 		StartedAt:  r.started,
 		EventsURL:  "/api/arena/runs/" + r.id + "/events",
+		PlayerMix:  r.playerMix,
+		Seed:       r.seed,
+		Tiles:      r.board.String(),
 	}
 }
 
@@ -434,6 +494,9 @@ func (r *Run) Snapshot() Snapshot {
 		FinishedAt:  cloneTime(r.finished),
 		Stats:       stats,
 		Leaderboard: cloneLeaderboard(r.leaderboard),
+		PlayerMix:   r.playerMix,
+		Seed:        r.seed,
+		Tiles:       r.board.String(),
 	}
 }
 
@@ -476,22 +539,21 @@ func (r *Run) play(index int) {
 
 	gameID := fmt.Sprintf("%s-%03d", r.id, index+1)
 	name := funName(r.id, index)
-	seed := seedFor(r.id, index)
-	board := wordhunt.NewBoard(seed, 20)
-	game := Game{ID: gameID, Index: index, Tiles: board.String(), PlayerName: name}
+	board := r.board
+	game := Game{ID: gameID, Index: index, Tiles: board.String(), PlayerName: name, PerfectScore: r.perfectScore}
 	r.publish(Event{Type: "game_started", Game: &game, Stats: pointer(r.currentStats())})
 
 	spec := GameSpec{
-		RunID: r.id, GameID: gameID, Index: index, Board: board, Duration: r.duration,
+		RunID: r.id, GameID: gameID, Index: index, Board: board, Duration: r.duration, PlayerMix: r.playerMix,
 	}
 	player, err := r.manager.cfg.PlayerFactory(r.ctx, spec)
 	started := r.manager.cfg.Now()
+	deadline := started.Add(r.duration)
 	var result players.Result
 	if err == nil && player == nil {
 		err = errors.New("player factory returned nil player")
 	}
 	if err == nil {
-		deadline := started.Add(r.duration)
 		moveContext, cancel := context.WithDeadline(r.ctx, deadline)
 		result, err = player.Play(moveContext, board, deadline)
 		cancel()
@@ -502,13 +564,14 @@ func (r *Run) play(index int) {
 	}
 
 	entry := LeaderboardEntry{
-		GameID:    gameID,
-		Name:      name,
-		Backend:   valueOr(result.Backend, "unknown"),
-		Model:     valueOr(result.Model, "unknown"),
-		Words:     make([]string, 0, min(len(result.Claims), r.manager.cfg.WordsPerGame)),
-		LatencyMS: durationMS(latency),
-		Fallback:  result.Fallback,
+		GameID:       gameID,
+		Name:         name,
+		Backend:      valueOr(result.Backend, "unknown"),
+		Model:        valueOr(result.Model, "unknown"),
+		Words:        make([]string, 0, min(len(result.Claims), r.manager.cfg.WordsPerGame)),
+		LatencyMS:    durationMS(latency),
+		Fallback:     result.Fallback,
+		PerfectScore: r.perfectScore,
 	}
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
@@ -523,6 +586,9 @@ func (r *Run) play(index int) {
 	seen := make(map[string]struct{}, maxClaims)
 	for _, claim := range result.Claims[:maxClaims] {
 		if r.ctx.Err() != nil {
+			break
+		}
+		if !r.manager.cfg.Now().Before(deadline) {
 			break
 		}
 		if len(entry.Words) >= r.manager.cfg.WordsPerGame {
@@ -581,8 +647,8 @@ func (p *pacedSolverPlayer) Play(ctx context.Context, board wordhunt.Board, dead
 		return players.Result{}, ctx.Err()
 	}
 	result, err := p.inner.Play(ctx, board, deadline)
-	result.Backend = "solver-bot"
-	result.Model = "trie-dfs · paced mock"
+	result.Backend = "in-process"
+	result.Model = "Solver bot (baseline)"
 	result.Fallback = false
 	result.Latency = time.Since(start)
 	return result, err
@@ -600,6 +666,7 @@ func waitContext(ctx context.Context, delay time.Duration) bool {
 }
 
 func (r *Run) complete(entry LeaderboardEntry) {
+	entry.TimeToScoreMS = durationMS(r.manager.cfg.Now().Sub(r.started))
 	r.mu.Lock()
 	r.completed++
 	r.latencies = append(r.latencies, entry.LatencyMS)
@@ -669,7 +736,7 @@ func (r *Run) finish() {
 		if r.leaderboard[i].Score != r.leaderboard[j].Score {
 			return r.leaderboard[i].Score > r.leaderboard[j].Score
 		}
-		return r.leaderboard[i].LatencyMS < r.leaderboard[j].LatencyMS
+		return r.leaderboard[i].TimeToScoreMS < r.leaderboard[j].TimeToScoreMS
 	})
 	status := r.status
 	stats := r.statsLocked(now)
@@ -872,6 +939,14 @@ func newID() string {
 		return hex.EncodeToString(raw[:])
 	}
 	return fmt.Sprintf("%x", time.Now().UnixNano())
+}
+
+func randomSeed() int64 {
+	var raw [8]byte
+	if _, err := rand.Read(raw[:]); err == nil {
+		return int64(binary.LittleEndian.Uint64(raw[:]) & uint64(^uint64(0)>>1))
+	}
+	return time.Now().UnixNano()
 }
 
 func seedFor(runID string, index int) int64 {

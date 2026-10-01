@@ -207,7 +207,7 @@ func TestDefaultSolverPublishesWordPathsAndLeaderboard(t *testing.T) {
 		t.Fatalf("leaderboard length = %d", len(snapshot.Leaderboard))
 	}
 	for _, entry := range snapshot.Leaderboard {
-		if entry.Name == "" || entry.Backend != "solver-bot" || entry.Model != "trie-dfs · paced mock" {
+		if entry.Name == "" || entry.Backend != "in-process" || entry.Model != "Solver bot (baseline)" {
 			t.Fatalf("incomplete leaderboard entry: %#v", entry)
 		}
 	}

@@ -19,6 +19,8 @@ export interface ArenaGame {
   score: number;
   words: number;
   latencyMs?: number;
+  timeToScoreMs?: number;
+  perfectScore: number;
   elapsedMs: number;
   durationMs?: number;
   currentWord: string;
@@ -62,4 +64,7 @@ export interface NormalizedArenaEvent {
 
 export interface RunCreatedResponse {
   run_id: string;
+  seed: number;
+  tiles: string;
+  player_mix: "bots" | "gemini" | "mixed";
 }
