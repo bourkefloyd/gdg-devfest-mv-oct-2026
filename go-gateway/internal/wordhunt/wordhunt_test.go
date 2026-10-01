@@ -1,9 +1,14 @@
 package wordhunt
 
 import (
+	"bufio"
 	"reflect"
 	"slices"
+	"strconv"
+	"strings"
 	"testing"
+
+	"os"
 )
 
 func testBoard(s string) Board {
@@ -118,6 +123,42 @@ func TestNewBoardDeterministicAndMinimum(t *testing.T) {
 	}
 	if slices.Contains(a.Tiles[:], byte(0)) {
 		t.Fatal("board has empty tiles")
+	}
+}
+
+func TestGoldenBoards(t *testing.T) {
+	f, err := os.Open("testdata/boards.golden")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) == 0 || strings.HasPrefix(fields[0], "#") {
+			continue
+		}
+		if len(fields) != 3 {
+			t.Fatalf("bad golden line %q", scanner.Text())
+		}
+		seed, err := strconv.ParseInt(fields[0], 10, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantCount, err := strconv.Atoi(fields[2])
+		if err != nil {
+			t.Fatal(err)
+		}
+		board := NewBoard(seed, 40)
+		if got := board.String(); got != fields[1] {
+			t.Errorf("seed %d tiles = %s, want %s", seed, got, fields[1])
+		}
+		if got := len(board.Solve(Default())); got != wantCount {
+			t.Errorf("seed %d solutions = %d, want %d", seed, got, wantCount)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatal(err)
 	}
 }
 
