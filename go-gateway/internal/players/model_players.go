@@ -18,7 +18,10 @@ import (
 
 const maxRawOutput = 16 << 10
 
-var wordRE = regexp.MustCompile(`^[a-z]{3,16}$`)
+var (
+	wordRE        = regexp.MustCompile(`^[a-z]{3,16}$`)
+	wordsPrefixRE = regexp.MustCompile(`(?i)WORDS:`)
+)
 
 type geminiOutput struct {
 	Words []struct {
@@ -76,11 +79,11 @@ func ParseGemmaOutput(raw string) ([]Claim, error) {
 	if len(raw) > maxRawOutput {
 		return nil, errors.New("model output exceeds 16 KiB")
 	}
-	i := strings.Index(strings.ToUpper(raw), "WORDS:")
-	if i < 0 {
+	loc := wordsPrefixRE.FindStringIndex(raw)
+	if loc == nil {
 		return nil, errors.New("missing WORDS: prefix")
 	}
-	parts := regexp.MustCompile(`[^A-Za-z]+`).Split(raw[i+len("WORDS:"):], -1)
+	parts := regexp.MustCompile(`[^A-Za-z]+`).Split(raw[loc[1]:], -1)
 	claims := make([]Claim, 0, min(len(parts), 150))
 	seen := map[string]struct{}{}
 	for _, part := range parts {
