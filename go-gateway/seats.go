@@ -101,10 +101,14 @@ func seatsFromEnv(log *slog.Logger, workers *pool.Pool) (w wiring) {
 	log.Info("players: real", "gemini_primary", backendName(b.Primary), "api_key_failover", apiFailover,
 		"gemma_pool", workers != nil, "gemini_model", env("GEMINI_PLAYER_MODEL", "default"))
 	o := seatOpts{
-		Model:       os.Getenv("GEMINI_PLAYER_MODEL"),
-		LiteModel:   os.Getenv("GEMINI_FALLBACK_MODEL"),
-		GemmaModel:  env("GEMMA_MODEL", "gemma-4-e2b"),
-		HostedGemma: os.Getenv("GEMMA_HOSTED_MODEL"),
+		Model:     os.Getenv("GEMINI_PLAYER_MODEL"),
+		LiteModel: os.Getenv("GEMINI_FALLBACK_MODEL"),
+		// Vertex and the API key serve different model IDs (e.g. Vertex
+		// 404s gemini-3.8-flash while the API key 404s gemini-2.5-flash).
+		APIModel:     os.Getenv("GEMINI_API_PLAYER_MODEL"),
+		APILiteModel: os.Getenv("GEMINI_API_FALLBACK_MODEL"),
+		GemmaModel:   env("GEMMA_MODEL", "gemma-4-e2b"),
+		HostedGemma:  os.Getenv("GEMMA_HOSTED_MODEL"),
 	}
 	w.seats = realSeats(b, workers, o)
 	o.Agent = true
@@ -122,6 +126,7 @@ func backendName(c *genai.Client) string {
 
 type seatOpts struct {
 	Model, LiteModel, GemmaModel string
+	APIModel, APILiteModel       string // API-key tier overrides; empty reuses Model/LiteModel
 	HostedGemma                  string // empty disables the hosted Gemma tier
 	Agent                        bool   // Gemini seat uses the submit_words agent loop
 }
@@ -129,14 +134,18 @@ type seatOpts struct {
 func realSeats(b genaiBackends, workers *pool.Pool, o seatOpts) api.SeatFunc {
 	dict := wordhunt.Default()
 	wrap := func(p players.Player, br *router.CircuitBreaker) players.Player {
-		return &router.BreakerPlayer{Breaker: br,
-			Player: &router.RetryPlayer{Player: p, Attempts: 3, Retryable: retryableGemini}}
+		return loggedTier{&router.BreakerPlayer{Breaker: br,
+			Player: &router.RetryPlayer{Player: p, Attempts: 3, Retryable: retryableGemini}}}
 	}
-	// tiers returns the model on Vertex (or the sole backend), then on the API key.
-	tiers := func(model string) []players.Player {
+	// tiers returns the model on Vertex (or the sole backend), then on the
+	// API key. Model IDs differ per backend, so the API tier may override.
+	tiers := func(model, apiModel string) []players.Player {
 		t := []players.Player{wrap(players.NewGeminiPlayer(b.Primary, model), b.PrimaryBreaker)}
 		if b.API != nil {
-			t = append(t, wrap(players.NewGeminiPlayer(b.API, model), b.APIBreaker))
+			if apiModel == "" {
+				apiModel = model
+			}
+			t = append(t, wrap(players.NewGeminiPlayer(b.API, apiModel), b.APIBreaker))
 		}
 		return t
 	}
@@ -145,10 +154,10 @@ func realSeats(b genaiBackends, workers *pool.Pool, o seatOpts) api.SeatFunc {
 	if o.Agent {
 		geminiChain = append(geminiChain, &router.BreakerPlayer{Breaker: b.PrimaryBreaker, Player: players.NewGeminiAgent(b.Primary, o.Model, dict)})
 	}
-	geminiChain = append(geminiChain, tiers(o.Model)...)
-	spill := tiers(o.Model)
+	geminiChain = append(geminiChain, tiers(o.Model, o.APIModel)...)
+	spill := tiers(o.Model, o.APIModel)
 	if o.LiteModel != "" {
-		spill = tiers(o.LiteModel)
+		spill = tiers(o.LiteModel, o.APILiteModel)
 		geminiChain = append(geminiChain, spill...)
 	}
 	geminiChain = append(geminiChain, &players.SolverPlayer{Dict: dict, Limit: 6})
@@ -169,6 +178,22 @@ func realSeats(b genaiBackends, workers *pool.Pool, o seatOpts) api.SeatFunc {
 		}
 		return []players.Player{g, &router.FallbackPlayer{NameLabel: "gemma", Chain: gemmaChain}}, nil
 	}
+}
+
+// loggedTier logs why a failover tier failed, since FallbackPlayer only
+// surfaces the last error. Messages are truncated; prompts are never logged.
+type loggedTier struct{ players.Player }
+
+func (l loggedTier) Play(ctx context.Context, b wordhunt.Board, deadline time.Time) (players.Result, error) {
+	res, err := l.Player.Play(ctx, b, deadline)
+	if err != nil {
+		msg := err.Error()
+		if len(msg) > 200 {
+			msg = msg[:200]
+		}
+		slog.Warn("model tier failed", "tier", l.Name(), "backend", res.Backend, "model", res.Model, "err", msg)
+	}
+	return res, err
 }
 
 // labeledFallback marks results as fallback even when it heads the chain, so

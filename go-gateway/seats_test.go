@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -90,6 +91,30 @@ func TestVertexFirstThenAPIKey(t *testing.T) {
 	res, err = play(seat(t, realSeats(testBackends(vertexDown, apiKey), nil, seatOpts{Model: "m"}), "gemini"))
 	if err != nil || res.Backend != "gemini-api" || !res.Fallback || vdCalls.Load() == 0 {
 		t.Fatalf("vertex down: res=%+v err=%v vertex_calls=%d", res, err, vdCalls.Load())
+	}
+}
+
+func TestAPITierUsesItsOwnModelID(t *testing.T) {
+	var path atomic.Value
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path.Store(r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(geminiOK))
+	}))
+	t.Cleanup(ts.Close)
+	apiKey, err := genai.NewClient(context.Background(), &genai.ClientConfig{
+		Backend: genai.BackendGeminiAPI, APIKey: "test", HTTPOptions: genai.HTTPOptions{BaseURL: ts.URL}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	vertexDown, _ := fakeVertex(t, -1)
+	o := seatOpts{Model: "vertex-only-model", APIModel: "api-only-model"}
+	res, err := play(seat(t, realSeats(testBackends(vertexDown, apiKey), nil, o), "gemini"))
+	if err != nil || res.Backend != "gemini-api" || res.Model != "api-only-model" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+	if p, _ := path.Load().(string); !strings.Contains(p, "api-only-model") {
+		t.Fatalf("API tier requested %q", p)
 	}
 }
 
