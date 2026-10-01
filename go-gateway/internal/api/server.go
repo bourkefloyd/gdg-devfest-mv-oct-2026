@@ -146,6 +146,7 @@ func (s *Server) Handler() http.Handler {
 	}
 
 	open("GET /healthz", s.handleHealthz)
+	open("GET /api/health", s.handleHealthz)
 	open("GET /readyz", s.handleReadyz)
 	mux.Handle("GET /metrics", promhttp.Handler())
 
