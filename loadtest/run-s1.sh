@@ -31,7 +31,10 @@ wanted = {
 }
 result = {}
 for metric, fields in wanted.items():
-    values = [run.get("metrics", {}).get(metric, {}).get("values", {}) for run in runs]
+    values = []
+    for run in runs:
+        entry = run.get("metrics", {}).get(metric, {})
+        values.append(entry.get("values", entry))
     result[metric] = {
         field: statistics.median(v[field] for v in values if field in v)
         for field in fields
