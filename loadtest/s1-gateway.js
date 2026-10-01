@@ -8,6 +8,7 @@ const createLatency = new Trend("game_create_duration", true);
 const submitLatency = new Trend("word_submit_duration", true);
 const unexpected = new Rate("unexpected_error");
 const expected4xx = new Counter("expected_4xx");
+const rateLimited = new Counter("rate_limited_429");
 let exercised = false;
 
 export const options = {
@@ -42,6 +43,7 @@ function record(response, latencyMetric, accepted) {
   latencyMetric.add(response.timings.duration);
   const expected = accepted.includes(response.status);
   unexpected.add(!expected);
+  if (response.status === 429) rateLimited.add(1);
   if (response.status >= 400 && response.status < 500 && expected) {
     expected4xx.add(1);
   }
