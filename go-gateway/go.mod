@@ -3,6 +3,7 @@ module go-gateway
 go 1.27.1
 
 require (
+	google.golang.org/genai v1.71.0
 	google.golang.org/grpc v1.84.0
 	google.golang.org/protobuf v1.36.12
 )
