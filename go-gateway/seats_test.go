@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +18,7 @@ import (
 	"go-gateway/internal/wordhunt"
 	pb "go-gateway/proto"
 
+	"cloud.google.com/go/auth"
 	"google.golang.org/genai"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -48,6 +51,65 @@ func fakeGemini(t *testing.T, failures int32) (*genai.Client, *atomic.Int32) {
 	return c, &calls
 }
 
+func testBackends(primary, apiKey *genai.Client) genaiBackends {
+	return genaiBackends{Primary: primary, API: apiKey,
+		PrimaryBreaker: router.NewCircuitBreaker(), APIBreaker: router.NewCircuitBreaker()}
+}
+
+type staticToken struct{}
+
+func (staticToken) Token(context.Context) (*auth.Token, error) {
+	return &auth.Token{Value: "test-token", Type: "Bearer", Expiry: time.Now().Add(time.Hour)}, nil
+}
+
+// fakeVertex is a Vertex-backend client against a fake server; like
+// fakeGemini it fails the first `failures` calls (all if negative).
+func fakeVertex(t *testing.T, failures int32) (*genai.Client, *atomic.Int32) {
+	t.Helper()
+	apiStyle, calls := fakeGemini(t, failures)
+	c, err := genai.NewClient(context.Background(), &genai.ClientConfig{
+		Backend: genai.BackendVertexAI, Project: "gen-lang-client-test", Location: "us-central1",
+		Credentials: auth.NewCredentials(&auth.CredentialsOptions{TokenProvider: staticToken{}}),
+		HTTPOptions: genai.HTTPOptions{BaseURL: apiStyle.ClientConfig().HTTPOptions.BaseURL},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c, calls
+}
+
+func TestVertexFirstThenAPIKey(t *testing.T) {
+	vertex, vCalls := fakeVertex(t, 0)
+	apiKey, aCalls := fakeGemini(t, 0)
+	res, err := play(seat(t, realSeats(testBackends(vertex, apiKey), nil, seatOpts{Model: "m"}), "gemini"))
+	if err != nil || res.Backend != "vertex" || res.Fallback || vCalls.Load() != 1 || aCalls.Load() != 0 {
+		t.Fatalf("healthy vertex: res=%+v err=%v vertex=%d api=%d", res, err, vCalls.Load(), aCalls.Load())
+	}
+
+	vertexDown, vdCalls := fakeVertex(t, -1)
+	res, err = play(seat(t, realSeats(testBackends(vertexDown, apiKey), nil, seatOpts{Model: "m"}), "gemini"))
+	if err != nil || res.Backend != "gemini-api" || !res.Fallback || vdCalls.Load() == 0 {
+		t.Fatalf("vertex down: res=%+v err=%v vertex_calls=%d", res, err, vdCalls.Load())
+	}
+}
+
+func TestNewBackendsFallsBackToAPIKeyWhenVertexMisconfigured(t *testing.T) {
+	t.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "true")
+	t.Setenv("GOOGLE_CLOUD_PROJECT", "")
+	t.Setenv("GOOGLE_CLOUD_LOCATION", "")
+	t.Setenv("GEMINI_API_KEY", "test-key")
+	b, err := newBackends(context.Background(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil || b.Primary == nil || backendName(b.Primary) != "gemini-api" || b.API != nil {
+		t.Fatalf("b=%+v err=%v", b, err)
+	}
+
+	t.Setenv("GOOGLE_GENAI_USE_VERTEXAI", "")
+	b, err = newBackends(context.Background(), slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err != nil || backendName(b.Primary) != "gemini-api" || b.API != nil {
+		t.Fatalf("api-only: b=%+v err=%v", b, err)
+	}
+}
+
 func seat(t *testing.T, seats func(string) ([]players.Player, error), name string) players.Player {
 	t.Helper()
 	ps, err := seats("race")
@@ -71,7 +133,7 @@ func play(p players.Player) (players.Result, error) {
 
 func TestGemini503TwiceThenSuccess(t *testing.T) {
 	client, calls := fakeGemini(t, 2)
-	p := seat(t, realSeats(client, nil, router.NewCircuitBreaker(), seatOpts{Model: "m"}), "gemini")
+	p := seat(t, realSeats(testBackends(client, nil), nil, seatOpts{Model: "m"}), "gemini")
 	res, err := play(p)
 	if err != nil || res.Fallback || res.Backend != "gemini-api" || len(res.Claims) != 2 {
 		t.Fatalf("res=%+v err=%v", res, err)
@@ -84,7 +146,7 @@ func TestGemini503TwiceThenSuccess(t *testing.T) {
 func TestGeminiDownFallsBackAndBreakerOpens(t *testing.T) {
 	client, calls := fakeGemini(t, -1)
 	breaker := router.NewCircuitBreaker()
-	p := seat(t, realSeats(client, nil, breaker, seatOpts{Model: "m"}), "gemini")
+	p := seat(t, realSeats(genaiBackends{Primary: client, PrimaryBreaker: breaker}, nil, seatOpts{Model: "m"}), "gemini")
 	for i := 0; i < 5; i++ {
 		res, err := play(p)
 		if err != nil || !res.Fallback || res.Backend != "solver" {
@@ -102,7 +164,7 @@ func TestGeminiDownFallsBackAndBreakerOpens(t *testing.T) {
 
 func TestGemmaSeatWithoutPoolIsLabeledFallback(t *testing.T) {
 	client, _ := fakeGemini(t, 0)
-	res, err := play(seat(t, realSeats(client, nil, router.NewCircuitBreaker(), seatOpts{Model: "m"}), "gemma"))
+	res, err := play(seat(t, realSeats(testBackends(client, nil), nil, seatOpts{Model: "m"}), "gemma"))
 	if err != nil || !res.Fallback || res.Backend != "gemini-api" {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
@@ -139,7 +201,7 @@ func TestGemmaKilledMidStreamFallsBackToGemini(t *testing.T) {
 	t.Cleanup(workers.Close)
 
 	client, _ := fakeGemini(t, 0)
-	p := seat(t, realSeats(client, workers, router.NewCircuitBreaker(), seatOpts{Model: "m"}), "gemma")
+	p := seat(t, realSeats(testBackends(client, nil), workers, seatOpts{Model: "m"}), "gemma")
 	res, err := play(p)
 	if err != nil || !res.Fallback || res.Backend != "gemini-api" {
 		t.Fatalf("res=%+v err=%v", res, err)
