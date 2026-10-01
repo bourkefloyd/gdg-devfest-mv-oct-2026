@@ -15,6 +15,7 @@ use candle_transformers::generation::LogitsProcessor;
 use gemma_hello::gemma4::{Gemma4ForCausalLM, Gemma4TopConfig};
 use inference::inference_service_server::{InferenceService, InferenceServiceServer};
 use inference::{GenerateRequest, GenerateResponse};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -70,10 +71,21 @@ impl InferenceService for InferenceServiceImpl {
     ) -> Result<Response<Self::StreamGenerateStream>, Status> {
         let req = request.into_inner();
         let prompt_raw = req.prompt;
-        let max_tokens = if req.max_tokens <= 0 { 128 } else { req.max_tokens as usize };
-        let temperature = if req.temperature > 0.0 { Some(req.temperature as f64) } else { None };
+        let max_tokens = if req.max_tokens <= 0 {
+            128
+        } else {
+            req.max_tokens as usize
+        };
+        let temperature = if req.temperature > 0.0 {
+            Some(req.temperature as f64)
+        } else {
+            None
+        };
 
-        println!("[gRPC] Incoming request: {:?} (max_tokens={}, temp={:?})", prompt_raw, max_tokens, temperature);
+        println!(
+            "[gRPC] Incoming request: {:?} (max_tokens={}, temp={:?})",
+            prompt_raw, max_tokens, temperature
+        );
 
         let state_clone = self.state.clone();
         let (tx, rx) = mpsc::channel(128);
@@ -82,12 +94,18 @@ impl InferenceService for InferenceServiceImpl {
             let mut state = state_clone.lock().await;
 
             // Canonical Gemma 4 turn delimiter formatting
-            let formatted_prompt = format!("<|turn>user\n{}<turn|>\n<|turn>model\n", prompt_raw.trim());
+            let formatted_prompt =
+                format!("<|turn>user\n{}<turn|>\n<|turn>model\n", prompt_raw.trim());
 
             let prompt_tokens = match state.tokenizer.encode(formatted_prompt.as_str(), true) {
                 Ok(encoding) => encoding.get_ids().to_vec(),
                 Err(err) => {
-                    let _ = tx.send(Err(Status::internal(format!("Tokenization error: {}", err)))).await;
+                    let _ = tx
+                        .send(Err(Status::internal(format!(
+                            "Tokenization error: {}",
+                            err
+                        ))))
+                        .await;
                     return;
                 }
             };
@@ -101,19 +119,34 @@ impl InferenceService for InferenceServiceImpl {
             let mut generated_count = 0;
 
             // 1. Prefill Phase (Forward entire prompt at position 0)
-            let prompt_tensor = match Tensor::new(&prompt_tokens[..], &device).and_then(|t| t.unsqueeze(0)) {
-                Ok(t) => t,
-                Err(err) => {
-                    let _ = tx.send(Err(Status::internal(format!("Prompt tensor creation failed: {}", err)))).await;
-                    state.model.clear_kv_cache();
-                    return;
-                }
-            };
+            let prompt_tensor =
+                match Tensor::new(&prompt_tokens[..], &device).and_then(|t| t.unsqueeze(0)) {
+                    Ok(t) => t,
+                    Err(err) => {
+                        let _ = tx
+                            .send(Err(Status::internal(format!(
+                                "Prompt tensor creation failed: {}",
+                                err
+                            ))))
+                            .await;
+                        state.model.clear_kv_cache();
+                        return;
+                    }
+                };
 
-            let logits = match state.model.forward(&prompt_tensor, 0).and_then(|l| l.squeeze(0)) {
+            let logits = match state
+                .model
+                .forward(&prompt_tensor, 0)
+                .and_then(|l| l.squeeze(0))
+            {
                 Ok(l) => l,
                 Err(err) => {
-                    let _ = tx.send(Err(Status::internal(format!("Prefill forward pass failed: {}", err)))).await;
+                    let _ = tx
+                        .send(Err(Status::internal(format!(
+                            "Prefill forward pass failed: {}",
+                            err
+                        ))))
+                        .await;
                     state.model.clear_kv_cache();
                     return;
                 }
@@ -122,7 +155,12 @@ impl InferenceService for InferenceServiceImpl {
             let mut next_token = match logits_processor.sample(&logits) {
                 Ok(t) => t,
                 Err(err) => {
-                    let _ = tx.send(Err(Status::internal(format!("Initial sampling failed: {}", err)))).await;
+                    let _ = tx
+                        .send(Err(Status::internal(format!(
+                            "Initial sampling failed: {}",
+                            err
+                        ))))
+                        .await;
                     state.model.clear_kv_cache();
                     return;
                 }
@@ -134,35 +172,58 @@ impl InferenceService for InferenceServiceImpl {
                     break;
                 }
 
-                let token_str = state.tokenizer.decode(&[next_token], false).unwrap_or_default();
+                let token_str = state
+                    .tokenizer
+                    .decode(&[next_token], false)
+                    .unwrap_or_default();
                 generated_count += 1;
 
-                if tx.send(Ok(GenerateResponse {
-                    token: token_str,
-                    is_final: false,
-                })).await.is_err() {
+                if tx
+                    .send(Ok(GenerateResponse {
+                        token: token_str,
+                        is_final: false,
+                    }))
+                    .await
+                    .is_err()
+                {
                     // HTTP client or gateway hung up
                     break;
                 }
 
-                let input_tensor = match Tensor::new(&[next_token], &device).and_then(|t| t.unsqueeze(0)) {
-                    Ok(t) => t,
-                    Err(err) => {
-                        let _ = tx.send(Err(Status::internal(format!("Step tensor creation failed: {}", err)))).await;
-                        break;
-                    }
-                };
+                let input_tensor =
+                    match Tensor::new(&[next_token], &device).and_then(|t| t.unsqueeze(0)) {
+                        Ok(t) => t,
+                        Err(err) => {
+                            let _ = tx
+                                .send(Err(Status::internal(format!(
+                                    "Step tensor creation failed: {}",
+                                    err
+                                ))))
+                                .await;
+                            break;
+                        }
+                    };
 
                 let logits = match state.model.forward(&input_tensor, prompt_len + step) {
                     Ok(l) => match l.squeeze(0) {
                         Ok(sq) => sq,
                         Err(err) => {
-                            let _ = tx.send(Err(Status::internal(format!("Logits squeeze failed: {}", err)))).await;
+                            let _ = tx
+                                .send(Err(Status::internal(format!(
+                                    "Logits squeeze failed: {}",
+                                    err
+                                ))))
+                                .await;
                             break;
                         }
                     },
                     Err(err) => {
-                        let _ = tx.send(Err(Status::internal(format!("Decode forward pass failed: {}", err)))).await;
+                        let _ = tx
+                            .send(Err(Status::internal(format!(
+                                "Decode forward pass failed: {}",
+                                err
+                            ))))
+                            .await;
                         break;
                     }
                 };
@@ -170,7 +231,9 @@ impl InferenceService for InferenceServiceImpl {
                 next_token = match logits_processor.sample(&logits) {
                     Ok(t) => t,
                     Err(err) => {
-                        let _ = tx.send(Err(Status::internal(format!("Sampling failed: {}", err)))).await;
+                        let _ = tx
+                            .send(Err(Status::internal(format!("Sampling failed: {}", err))))
+                            .await;
                         break;
                     }
                 };
@@ -191,10 +254,12 @@ impl InferenceService for InferenceServiceImpl {
             state.model.clear_kv_cache();
 
             // Send final termination packet
-            let _ = tx.send(Ok(GenerateResponse {
-                token: String::new(),
-                is_final: true,
-            })).await;
+            let _ = tx
+                .send(Ok(GenerateResponse {
+                    token: String::new(),
+                    is_final: true,
+                }))
+                .await;
         });
 
         Ok(Response::new(ReceiverStream::new(rx)))
@@ -205,7 +270,9 @@ impl InferenceService for InferenceServiceImpl {
 async fn main() -> Result<()> {
     println!("=== Gemma 4 High-Performance gRPC Inference Worker ===");
 
-    let model_dir = Path::new("models/gemma-4-e2b");
+    let model_dir_value =
+        std::env::var("GEMMA_MODEL_DIR").unwrap_or_else(|_| "models/gemma-4-e2b".into());
+    let model_dir = Path::new(&model_dir_value);
     if !model_dir.exists() {
         eprintln!("Error: models/gemma-4-e2b directory does not exist.");
         return Ok(());
@@ -229,19 +296,28 @@ async fn main() -> Result<()> {
     } else {
         DType::F32
     };
-    println!("   Active hardware device: {:?} (Precision: {:?})", device, dtype);
+    println!(
+        "   Active hardware device: {:?} (Precision: {:?})",
+        device, dtype
+    );
 
     println!("3. Loading tokenizer from {:?}", tokenizer_path);
     let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(anyhow::Error::msg)?;
     let eos_token_id = tokenizer.token_to_id("<turn|>").unwrap_or(1);
 
-    println!("4. Memory-mapping {} safetensors file(s)", safetensor_files.len());
+    println!(
+        "4. Memory-mapping {} safetensors file(s)",
+        safetensor_files.len()
+    );
     let vb = unsafe { VarBuilder::from_mmaped_safetensors(&safetensor_files, dtype, &device)? };
 
     println!("5. Instantiating Gemma 4 neural network into GPU memory");
     let load_start = Instant::now();
     let model = Gemma4ForCausalLM::new(&text_config, vb)?;
-    println!("   Model initialized and warm in {:.2?}", load_start.elapsed());
+    println!(
+        "   Model initialized and warm in {:.2?}",
+        load_start.elapsed()
+    );
 
     let state = Arc::new(Mutex::new(WorkerState {
         model,
@@ -251,7 +327,9 @@ async fn main() -> Result<()> {
     }));
 
     let service = InferenceServiceImpl::new(state);
-    let addr = "0.0.0.0:50051".parse()?;
+    let addr: SocketAddr = std::env::var("GRPC_LISTEN_ADDR")
+        .unwrap_or_else(|_| "127.0.0.1:50051".into())
+        .parse()?;
 
     println!("\nGemma 4 gRPC Worker listening on http://{}", addr);
     Server::builder()
