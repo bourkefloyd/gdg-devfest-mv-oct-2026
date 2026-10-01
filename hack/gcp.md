@@ -136,14 +136,15 @@ response from the `us-central1` Vertex AI endpoint in **1,994 ms**.
 
 The serving probe returned:
 
-- `gemini-3.8-flash`: 404, not served or not accessible in `us-central1`
+- `gemini-3.8-flash`: 404 in `us-central1`; 200 from Vertex `global`
 - `gemini-3.5-flash-lite`: 404, not served or not accessible in `us-central1`
 - `gemini-3.1-flash-lite`: 404, not served or not accessible in `us-central1`
 - `gemini-2.5-flash`: 200, served in `us-central1`
 
-Keep `GOOGLE_CLOUD_LOCATION=us-central1` and explicitly use
-`gemini-2.5-flash` for the player, fallback, and commentator. This avoids
-depending on unverified global-only model names during the demo.
+Use `GOOGLE_CLOUD_LOCATION=global` with `gemini-3.8-flash` for the Vertex
+player, fallback, and commentator. The Gemini API-key failover tier also uses
+its verified `gemini-3.8-flash` model through the separate
+`GEMINI_API_PLAYER_MODEL` and `GEMINI_API_FALLBACK_MODEL` variables.
 
 The existing local Application Default Credentials (ADC) needed interactive
 reauthentication, so that smoke used the same active `gcloud` user principal's
@@ -203,7 +204,7 @@ gcloud config set project "$PROJECT_ID"
 gcloud builds submit \
   --project="$PROJECT_ID" \
   --tag="$IMAGE" \
-  go-gateway
+  .
 ```
 
 If Cloud Build reports that its build identity cannot push to Artifact
@@ -226,7 +227,7 @@ gcloud run deploy "$SERVICE" \
   --image="$IMAGE" \
   --service-account="wordrust-run@${PROJECT_ID}.iam.gserviceaccount.com" \
   --set-secrets="GATEWAY_API_KEYS=gateway-api-keys:latest,GEMINI_API_KEY=gemini-api-key:latest" \
-  --set-env-vars="HOST=0.0.0.0,PLAYERS=real,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=${REGION},GEMINI_PLAYER_MODEL=gemini-2.5-flash,GEMINI_FALLBACK_MODEL=gemini-2.5-flash,GEMINI_COMMENTATOR_MODEL=gemini-2.5-flash,MAX_ACTIVE_GAMES=2000" \
+  --set-env-vars="HOST=0.0.0.0,PLAYERS=real,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=global,GEMINI_PLAYER_MODEL=gemini-3.8-flash,GEMINI_FALLBACK_MODEL=gemini-3.8-flash,GEMINI_COMMENTATOR_MODEL=gemini-3.8-flash,GEMINI_API_PLAYER_MODEL=gemini-3.8-flash,GEMINI_API_FALLBACK_MODEL=gemini-3.8-flash,MAX_ACTIVE_GAMES=2000,ARENA_MAX_REAL_GAMES=12" \
   --port=8080 \
   --cpu=4 \
   --memory=2Gi \
