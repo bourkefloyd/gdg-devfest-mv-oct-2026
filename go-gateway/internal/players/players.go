@@ -23,6 +23,8 @@ type Result struct {
 	Latency  time.Duration
 	Fallback bool
 	Raw      string
+	Profile  string
+	Retries  int
 }
 
 type Player interface {

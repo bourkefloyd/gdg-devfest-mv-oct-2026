@@ -94,7 +94,7 @@ func main() {
 		return st.Healthy > 0 || geminiReady(), d
 	}
 	srv := api.New(cfg)
-	arenaHandler := newArenaHandler(wired.seats, wired.agentSeats)
+	arenaHandler := newArenaHandler(wired.arenaClient)
 	srv.MountPublic("POST /api/arena/runs", arenaHandler)
 	srv.MountPublic("GET /api/arena/runs/{id}", arenaHandler)
 	srv.MountPublic("GET /api/arena/runs/{id}/events", arenaHandler)
