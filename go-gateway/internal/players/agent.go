@@ -15,9 +15,10 @@ import (
 
 // GeminiAgent iterates on server validation feedback via submit_words.
 type GeminiAgent struct {
-	Client *genai.Client
-	Model  string
-	Dict   *wordhunt.Dict
+	Client  *genai.Client
+	Model   string
+	Backend string
+	Dict    *wordhunt.Dict
 }
 
 func NewGeminiAgent(client *genai.Client, model string, dict *wordhunt.Dict) *GeminiAgent {
@@ -27,7 +28,9 @@ func NewGeminiAgent(client *genai.Client, model string, dict *wordhunt.Dict) *Ge
 	if dict == nil {
 		dict = wordhunt.Default()
 	}
-	return &GeminiAgent{Client: client, Model: model, Dict: dict}
+	return &GeminiAgent{
+		Client: client, Model: model, Backend: genAIBackendName(client), Dict: dict,
+	}
 }
 
 func (p *GeminiAgent) Name() string { return "Gemini agent" }
@@ -69,7 +72,7 @@ func (p *GeminiAgent) Play(ctx context.Context, b wordhunt.Board, deadline time.
 	}
 
 	response, err := chat.SendMessage(ctx, *genai.NewPartFromText(
-		boardPrompt(b) + "\nFind the best words, then call submit_words. Use adjacent tiles (including diagonals), never reuse a tile in one word.",
+		geminiSearchPrompt(b) + "\nCall submit_words with your best candidates.",
 	))
 	if err != nil {
 		return Result{}, err
@@ -141,7 +144,7 @@ func (p *GeminiAgent) Play(ctx context.Context, b wordhunt.Board, deadline time.
 	sort.Slice(claims, func(i, j int) bool { return claims[i].Word < claims[j].Word })
 	return Result{
 		Claims:  claims,
-		Backend: "gemini-api-agent",
+		Backend: p.Backend + "-agent",
 		Model:   p.Model,
 		Latency: time.Since(start),
 		Raw:     raw.String(),
