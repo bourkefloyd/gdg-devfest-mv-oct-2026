@@ -8,6 +8,7 @@ const createLatency = new Trend("game_create_duration", true);
 const submitLatency = new Trend("word_submit_duration", true);
 const unexpected = new Rate("unexpected_error");
 const expected4xx = new Counter("expected_4xx");
+let exercised = false;
 
 export const options = {
   scenarios: {
@@ -47,6 +48,14 @@ function record(response, latencyMetric, accepted) {
 }
 
 export default function () {
+  // A VU represents one concurrent game. Keep it resident after its one
+  // game flow so ramping-vus does not accidentally benchmark rate limiting.
+  if (exercised) {
+    sleep(1);
+    return;
+  }
+  exercised = true;
+
   const create = http.post(
     `${baseURL}/v1/games`,
     JSON.stringify({ mode: "load", duration_s: Number(__ENV.ROUND_SECONDS || 15) }),
