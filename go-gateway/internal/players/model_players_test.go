@@ -44,6 +44,24 @@ func TestParseGeminiOutputLimits(t *testing.T) {
 	}
 }
 
+func TestParseGeminiOutputSalvagesCompleteItems(t *testing.T) {
+	claims, err := ParseGeminiOutput(
+		`{"words":[{"word":"cat","path":[0,1,2]},{"word":"tone"},{"word":"unfinished`,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claims) != 2 || claims[0].Word != "cat" || claims[1].Word != "tone" {
+		t.Fatalf("unexpected salvaged claims: %#v", claims)
+	}
+	if _, err := ParseGeminiOutput(`{"words":[{"word":"unfinished`); err == nil {
+		t.Fatal("must not salvage when no complete item exists")
+	}
+	if _, err := ParseGeminiOutput(`{"words":[{"word":"cat","extra":true},{"word":"unfinished`); err == nil {
+		t.Fatal("must preserve strict unknown-field rejection")
+	}
+}
+
 func TestParseGemmaOutput(t *testing.T) {
 	claims, err := ParseGemmaOutput("thinking...\nWORDS: Cat, TONE; cat, x, ignore_previous_instructions")
 	if err != nil {
@@ -70,6 +88,25 @@ func TestPlayerThinkingConfig(t *testing.T) {
 	}
 }
 
+func TestModelOutputLimitsFromEnv(t *testing.T) {
+	t.Setenv("GEMINI_PLAYER_MAX_OUTPUT_TOKENS", "12000")
+	t.Setenv("GEMINI_PLAYER_MAX_WORDS", "17")
+	player := NewGeminiPlayer(nil, "model")
+	if player.MaxOutputTokens != 12000 || player.MaxWords != 17 {
+		t.Fatalf("player limits: tokens=%d words=%d", player.MaxOutputTokens, player.MaxWords)
+	}
+	t.Setenv("GEMINI_AGENT_MAX_OUTPUT_TOKENS", "16000")
+	t.Setenv("GEMINI_AGENT_MAX_WORDS", "14")
+	agent := NewGeminiAgent(nil, "model", nil)
+	if agent.MaxOutputTokens != 16000 || agent.MaxWords != 14 {
+		t.Fatalf("agent limits: tokens=%d words=%d", agent.MaxOutputTokens, agent.MaxWords)
+	}
+	t.Setenv("GEMINI_PLAYER_MAX_OUTPUT_TOKENS", "999999")
+	if got := NewGeminiPlayer(nil, "model").MaxOutputTokens; got != 8192 {
+		t.Fatalf("out-of-range value should use default, got %d", got)
+	}
+}
+
 func TestGeminiPlayerPromptIncludesNeighbors(t *testing.T) {
 	board := wordhunt.Board{Tiles: [16]byte{
 		'a', 'b', 'c', 'd',
@@ -77,10 +114,11 @@ func TestGeminiPlayerPromptIncludesNeighbors(t *testing.T) {
 		'i', 'j', 'k', 'l',
 		'm', 'n', 'o', 'p',
 	}}
-	prompt := geminiPlayerPrompt(board)
+	prompt := geminiPlayerPrompt(board, 20)
 	for _, want := range []string{
 		"0:a -> [1:b, 4:e, 5:f]",
 		"5:f -> [0:a, 1:b, 2:c, 4:e, 6:g, 8:i, 9:j, 10:k]",
+		"Find at most 20 words",
 		"Start with high-confidence 3-5 letter words",
 		"Worked rule example",
 		"Omit path",
@@ -116,7 +154,7 @@ func TestGeminiLive(t *testing.T) {
 		'm', 'u', 'g', 'h',
 	}}
 	result, err := NewGeminiPlayer(client, os.Getenv("GEMINI_PLAYER_MODEL")).
-		Play(context.Background(), board, time.Now().Add(20*time.Second))
+		Play(context.Background(), board, time.Now().Add(30*time.Second))
 	if err != nil {
 		t.Fatal(err)
 	}

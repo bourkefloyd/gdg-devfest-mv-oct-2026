@@ -15,10 +15,12 @@ import (
 
 // GeminiAgent iterates on server validation feedback via submit_words.
 type GeminiAgent struct {
-	Client  *genai.Client
-	Model   string
-	Backend string
-	Dict    *wordhunt.Dict
+	Client          *genai.Client
+	Model           string
+	Backend         string
+	Dict            *wordhunt.Dict
+	MaxOutputTokens int32
+	MaxWords        int
 }
 
 func NewGeminiAgent(client *genai.Client, model string, dict *wordhunt.Dict) *GeminiAgent {
@@ -30,6 +32,8 @@ func NewGeminiAgent(client *genai.Client, model string, dict *wordhunt.Dict) *Ge
 	}
 	return &GeminiAgent{
 		Client: client, Model: model, Backend: genAIBackendName(client), Dict: dict,
+		MaxOutputTokens: envInt32("GEMINI_AGENT_MAX_OUTPUT_TOKENS", 8192, 512, 32768),
+		MaxWords:        int(envInt32("GEMINI_AGENT_MAX_WORDS", 20, 1, 50)),
 	}
 }
 
@@ -51,7 +55,7 @@ func (p *GeminiAgent) Play(ctx context.Context, b wordhunt.Board, deadline time.
 			"properties": map[string]any{
 				"words": map[string]any{
 					"type":     "array",
-					"maxItems": 50,
+					"maxItems": p.MaxWords,
 					"items":    map[string]any{"type": "string"},
 				},
 			},
@@ -64,7 +68,7 @@ func (p *GeminiAgent) Play(ctx context.Context, b wordhunt.Board, deadline time.
 			Mode: genai.FunctionCallingConfigModeAny,
 		}},
 		Temperature:     ptr(float32(0.2)),
-		MaxOutputTokens: 2048,
+		MaxOutputTokens: p.MaxOutputTokens,
 		ThinkingConfig:  &genai.ThinkingConfig{ThinkingBudget: ptr(int32(128))},
 	}, nil)
 	if err != nil {
@@ -72,7 +76,7 @@ func (p *GeminiAgent) Play(ctx context.Context, b wordhunt.Board, deadline time.
 	}
 
 	response, err := chat.SendMessage(ctx, *genai.NewPartFromText(
-		geminiSearchPrompt(b) + "\nCall submit_words with your best candidates.",
+		geminiSearchPrompt(b, p.MaxWords) + "\nCall submit_words with your best candidates.",
 	))
 	if err != nil {
 		return Result{}, err
