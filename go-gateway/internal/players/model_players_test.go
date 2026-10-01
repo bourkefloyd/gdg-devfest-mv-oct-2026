@@ -2,12 +2,17 @@ package players
 
 import (
 	"context"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"go-gateway/internal/wordhunt"
+
+	"google.golang.org/genai"
 )
 
 func TestParseGeminiOutput(t *testing.T) {
@@ -83,6 +88,75 @@ func TestGeminiLive(t *testing.T) {
 	}
 	if len(result.Claims) == 0 {
 		t.Fatal("Gemini returned no parseable claims")
+	}
+	valid := 0
+	dict := wordhunt.Default()
+	for _, claim := range result.Claims {
+		if ok, _ := wordhunt.ValidateWord(board, dict, claim.Word, nil); ok {
+			valid++
+		}
+	}
+	if valid == 0 {
+		t.Fatal("Gemini returned no server-valid claims")
+	}
+	t.Logf("model=%s claims=%d valid=%d latency=%s", result.Model, len(result.Claims), valid, result.Latency)
+}
+
+func TestGeminiPlayerFakeServer(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		if !strings.Contains(string(body), `"responseSchema"`) {
+			t.Errorf("request lacks response schema: %s", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"candidates":[{"content":{"role":"model","parts":[{"text":"{\"words\":[{\"word\":\"cat\",\"path\":[0,1,2]}]}"}]},"finishReason":"STOP"}]}`)
+	}))
+	defer server.Close()
+	client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey:  "fake-key",
+		Backend: genai.BackendGeminiAPI,
+		HTTPOptions: genai.HTTPOptions{
+			BaseURL: server.URL,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	board := wordhunt.Board{Tiles: [16]byte{'c', 'a', 't'}}
+	result, err := NewGeminiPlayer(client, "fake-model").
+		Play(context.Background(), board, time.Now().Add(5*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Claims) != 1 || result.Claims[0].Word != "cat" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestHostedGemmaLive(t *testing.T) {
+	if os.Getenv("LIVE_HOSTED_GEMMA") != "1" {
+		t.Skip("set LIVE_HOSTED_GEMMA=1 to call hosted Gemma")
+	}
+	client, err := NewGenAIClient(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	board := wordhunt.Board{Tiles: [16]byte{
+		'c', 'a', 't', 's',
+		'r', 'o', 'n', 'e',
+		'l', 'i', 'p', 'd',
+		'm', 'u', 'g', 'h',
+	}}
+	result, err := NewHostedGemmaPlayer(client, "").
+		Play(context.Background(), board, time.Now().Add(25*time.Second))
+	if err != nil {
+		t.Fatalf("%v; raw=%q", err, result.Raw)
+	}
+	if len(result.Claims) == 0 {
+		t.Fatal("hosted Gemma returned no parseable claims")
 	}
 	t.Logf("model=%s claims=%d latency=%s", result.Model, len(result.Claims), result.Latency)
 }
