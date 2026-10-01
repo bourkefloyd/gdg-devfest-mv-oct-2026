@@ -26,6 +26,9 @@ Region: `us-central1`
   - `roles/monitoring.metricWriter`
 - Secret Manager secret `gemini-api-key` has an enabled version and grants the
   runtime service account `roles/secretmanager.secretAccessor` on the secret.
+- Secret Manager secret `gateway-api-keys` contains three generated bearer
+  keys. The runtime service account can access it, and a mode-`0600`,
+  gitignored local copy is stored in `.env` as `GATEWAY_API_KEYS`.
 
 The setup commands are:
 
@@ -85,6 +88,42 @@ gcloud secrets add-iam-policy-binding gemini-api-key \
   --project="$PROJECT_ID" \
   --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
   --role=roles/secretmanager.secretAccessor
+
+gcloud secrets create gateway-api-keys \
+  --project="$PROJECT_ID" \
+  --replication-policy=automatic
+
+# Generate three bearer keys, save a gitignored local copy, and stream the same
+# comma-separated value to Secret Manager without printing it.
+python3 - .env <<'PY' |
+import os
+import secrets
+import sys
+
+path = sys.argv[1]
+value = ",".join(secrets.token_urlsafe(32) for _ in range(3))
+lines = []
+if os.path.exists(path):
+    with open(path) as env_file:
+        lines = [
+            line.rstrip("\n")
+            for line in env_file
+            if not line.startswith(("GATEWAY_API_KEYS=", "export GATEWAY_API_KEYS="))
+        ]
+lines.append(f"GATEWAY_API_KEYS={value}")
+with open(path, "w") as env_file:
+    env_file.write("\n".join(lines) + "\n")
+os.chmod(path, 0o600)
+sys.stdout.write(value)
+PY
+  gcloud secrets versions add gateway-api-keys \
+    --project="$PROJECT_ID" \
+    --data-file=-
+
+gcloud secrets add-iam-policy-binding gateway-api-keys \
+  --project="$PROJECT_ID" \
+  --member="serviceAccount:${RUNTIME_SA_EMAIL}" \
+  --role=roles/secretmanager.secretAccessor
 ```
 
 These are one-time creation commands. Use `describe` before rerunning a create
@@ -94,6 +133,17 @@ command, or omit that command when the resource already exists.
 
 On 2026-10-01, `gemini-2.5-flash` returned HTTP 200 with the expected `OK`
 response from the `us-central1` Vertex AI endpoint in **1,994 ms**.
+
+The serving probe returned:
+
+- `gemini-3.8-flash`: 404, not served or not accessible in `us-central1`
+- `gemini-3.5-flash-lite`: 404, not served or not accessible in `us-central1`
+- `gemini-3.1-flash-lite`: 404, not served or not accessible in `us-central1`
+- `gemini-2.5-flash`: 200, served in `us-central1`
+
+Keep `GOOGLE_CLOUD_LOCATION=us-central1` and explicitly use
+`gemini-2.5-flash` for the player, fallback, and commentator. This avoids
+depending on unverified global-only model names during the demo.
 
 The existing local Application Default Credentials (ADC) needed interactive
 reauthentication, so that smoke used the same active `gcloud` user principal's
@@ -134,8 +184,8 @@ unset ACCESS_TOKEN
 
 ## Exact Cloud Run deployment recipe
 
-Do not run this until the application has a production `Dockerfile` whose
-server listens on `0.0.0.0:$PORT`. Run these commands from the repository root.
+Run these commands from the repository root. The image contains only the Go
+gateway; the Rust worker remains outside Cloud Run.
 
 ### 1. Build with Cloud Build
 
@@ -153,7 +203,7 @@ gcloud config set project "$PROJECT_ID"
 gcloud builds submit \
   --project="$PROJECT_ID" \
   --tag="$IMAGE" \
-  .
+  go-gateway
 ```
 
 If Cloud Build reports that its build identity cannot push to Artifact
@@ -163,8 +213,10 @@ role to the runtime service account.
 
 ### 2. Deploy
 
-The load-test profile keeps one warm instance, caps scale-out at 20 instances,
-and permits 40 concurrent requests per instance.
+The gateway stores games in memory, so the load-test profile pins it to one
+always-on instance. A concurrency of 1,000 leaves room for long-lived SSE
+connections. Session affinity is defense in depth, not a substitute for the
+single-instance cap.
 
 ```bash
 gcloud run deploy "$SERVICE" \
@@ -173,15 +225,17 @@ gcloud run deploy "$SERVICE" \
   --platform=managed \
   --image="$IMAGE" \
   --service-account="wordrust-run@${PROJECT_ID}.iam.gserviceaccount.com" \
-  --set-secrets="GEMINI_API_KEY=gemini-api-key:latest" \
-  --set-env-vars="GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=${REGION},GOOGLE_GENAI_USE_VERTEXAI=true" \
+  --set-secrets="GATEWAY_API_KEYS=gateway-api-keys:latest,GEMINI_API_KEY=gemini-api-key:latest" \
+  --set-env-vars="HOST=0.0.0.0,PLAYERS=real,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=${REGION},GEMINI_PLAYER_MODEL=gemini-2.5-flash,GEMINI_FALLBACK_MODEL=gemini-2.5-flash,GEMINI_COMMENTATOR_MODEL=gemini-2.5-flash,MAX_ACTIVE_GAMES=2000" \
   --port=8080 \
-  --cpu=2 \
+  --cpu=4 \
   --memory=2Gi \
   --timeout=300 \
   --min-instances=1 \
-  --max-instances=20 \
-  --concurrency=40 \
+  --max-instances=1 \
+  --concurrency=1000 \
+  --no-cpu-throttling \
+  --session-affinity \
   --allow-unauthenticated
 ```
 
