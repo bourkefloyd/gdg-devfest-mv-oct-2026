@@ -37,6 +37,10 @@ var (
 		Name: "rate_limited_total",
 		Help: "Requests rejected by rate limits or caps.",
 	}, []string{"limit"})
+	pathClaims = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "model_path_claims_total",
+		Help: "Model-supplied tile paths by result (correct, wrong, none).",
+	}, []string{"result"})
 	authFailures = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "auth_failures_total",
 		Help: "Requests rejected for missing or invalid API keys.",
@@ -45,5 +49,5 @@ var (
 
 func init() {
 	prometheus.MustRegister(httpRequests, httpDuration, gamesActive, gamesTotal, modelCall,
-		fallbackTotal, validationRejects, rateLimited, authFailures)
+		fallbackTotal, validationRejects, rateLimited, pathClaims, authFailures)
 }

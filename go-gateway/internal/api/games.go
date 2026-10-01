@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"go-gateway/internal/players"
@@ -313,7 +314,10 @@ func (s *Server) playSeat(ctx context.Context, g *Game, endsAt time.Time, name s
 		}
 		t := time.Now()
 		for _, c := range claims {
-			e := g.claimLocked(ps, c.Word, c.Path, t)
+			// Model paths are advisory: score the word if any valid path
+			// exists, and only record whether the claimed path was right.
+			recordPathClaim(g, c)
+			e := g.claimLocked(ps, c.Word, nil, t)
 			g.publishLocked("word", wordEvent(name, e, ps.Score))
 		}
 	}
@@ -322,6 +326,33 @@ func (s *Server) playSeat(ctx context.Context, g *Game, endsAt time.Time, name s
 		"fallback": ps.Fallback, "latency_ms": ps.LatencyMs, "score": ps.Score,
 		"accepted": len(ps.Accepted), "rejected": len(ps.Rejected) + ps.Dropped, "error": ps.Error,
 	})
+}
+
+func recordPathClaim(g *Game, c players.Claim) {
+	switch {
+	case len(c.Path) == 0:
+		pathClaims.WithLabelValues("none").Inc()
+	case validPathIndices(c.Path):
+		if ok, _ := wordhunt.ValidateWord(g.Board, g.dict, strings.ToLower(c.Word), c.Path); ok {
+			pathClaims.WithLabelValues("correct").Inc()
+			return
+		}
+		fallthrough
+	default:
+		pathClaims.WithLabelValues("wrong").Inc()
+	}
+}
+
+func validPathIndices(path []int) bool {
+	if len(path) > wordhunt.MaxLen {
+		return false
+	}
+	for _, i := range path {
+		if i < 0 || i >= wordhunt.NumTiles {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) safePlay(ctx context.Context, p players.Player, b wordhunt.Board, deadline time.Time) (res players.Result, err error) {

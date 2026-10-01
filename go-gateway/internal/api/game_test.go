@@ -214,6 +214,24 @@ func TestCommentaryAfterGameOver(t *testing.T) {
 	}
 }
 
+func TestModelPathIsAdvisory(t *testing.T) {
+	board := wordhunt.NewBoard(11, 40)
+	word := board.Solve(wordhunt.Default())[0]
+	e := newEnv(t, func(c *Config) {
+		c.Seats = func(string) ([]players.Player, error) {
+			return []players.Player{&fakePlayer{name: "gemini", delay: 10 * time.Millisecond, res: players.Result{
+				Backend: "gemini-api", Claims: []players.Claim{{Word: word, Path: []int{0, 15, 5}}}}}}, nil
+		}
+	})
+	g := e.create(keyA, map[string]any{"mode": "race", "duration_s": 3, "seed": 11})
+	e.readEvents(e.ts.URL+"/v1/games/"+g["game_id"].(string)+"/events", bearerHeader(keyA), 8*time.Second)
+	_, view := e.do("GET", "/v1/games/"+g["game_id"].(string), keyA, nil)
+	p := view["players"].([]any)[0].(map[string]any)
+	if len(p["accepted"].([]any)) != 1 {
+		t.Fatalf("real word with a wrong model path should score: %v", p)
+	}
+}
+
 func TestAgentFlagSelectsAgentSeats(t *testing.T) {
 	e := newEnv(t, func(c *Config) {
 		c.AgentSeats = func(string) ([]players.Player, error) {
