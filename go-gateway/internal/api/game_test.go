@@ -214,6 +214,21 @@ func TestCommentaryAfterGameOver(t *testing.T) {
 	}
 }
 
+func TestAgentFlagSelectsAgentSeats(t *testing.T) {
+	e := newEnv(t, func(c *Config) {
+		c.AgentSeats = func(string) ([]players.Player, error) {
+			return []players.Player{&fakePlayer{name: "gemini-agent", delay: 10 * time.Millisecond}}, nil
+		}
+	})
+	g := e.create(keyA, map[string]any{"mode": "race", "duration_s": 2, "agent": true})
+	if ps := g["players"].([]any); len(ps) != 1 || ps[0] != "gemini-agent" {
+		t.Fatalf("agent players: %v", ps)
+	}
+	if g = e.create(keyA, map[string]any{"mode": "race", "duration_s": 2}); len(g["players"].([]any)) != 2 {
+		t.Fatalf("default players: %v", g["players"])
+	}
+}
+
 func TestShutdownRefusesReadiness(t *testing.T) {
 	e := newEnv(t, nil)
 	e.srv.cancel()

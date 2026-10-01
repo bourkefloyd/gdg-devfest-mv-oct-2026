@@ -74,7 +74,11 @@ func main() {
 		AllowedOrigins: splitList(env("CORS_ALLOWED_ORIGINS", "http://localhost:4317,http://127.0.0.1:4317")),
 		MaxActiveGames: envInt("MAX_ACTIVE_GAMES", 2000),
 		Logger:         log,
-		Seats:          seatsFromEnv(log, workers),
+	}
+	wired := seatsFromEnv(log, workers)
+	cfg.Seats, cfg.AgentSeats = wired.seats, wired.agentSeats
+	if wired.commentator != nil {
+		cfg.Commentator = wired.commentator
 	}
 	if workers != nil {
 		cfg.Chat = workers
