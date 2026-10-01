@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -104,15 +106,19 @@ func ParseGemmaOutput(raw string) ([]Claim, error) {
 }
 
 type GeminiPlayer struct {
-	Client *genai.Client
-	Model  string
+	Client   *genai.Client
+	Model    string
+	Thinking *genai.ThinkingConfig
 }
 
 func NewGeminiPlayer(client *genai.Client, model string) *GeminiPlayer {
 	if model == "" {
+		model = os.Getenv("GEMINI_PLAYER_MODEL")
+	}
+	if model == "" {
 		model = "gemini-3.8-flash"
 	}
-	return &GeminiPlayer{Client: client, Model: model}
+	return &GeminiPlayer{Client: client, Model: model, Thinking: playerThinkingConfig()}
 }
 
 func (p *GeminiPlayer) Name() string { return "Gemini" }
@@ -147,7 +153,7 @@ func (p *GeminiPlayer) Play(ctx context.Context, b wordhunt.Board, deadline time
 		ResponseSchema:   schema,
 		Temperature:      ptr(float32(0.2)),
 		MaxOutputTokens:  4096,
-		ThinkingConfig:   &genai.ThinkingConfig{ThinkingBudget: ptr(int32(128))},
+		ThinkingConfig:   p.Thinking,
 	})
 	if err != nil {
 		return Result{}, err
@@ -274,3 +280,20 @@ func moveContext(parent context.Context, deadline time.Time) (context.Context, c
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func playerThinkingConfig() *genai.ThinkingConfig {
+	if level := strings.ToUpper(strings.TrimSpace(os.Getenv("GEMINI_PLAYER_THINKING_LEVEL"))); level != "" {
+		switch genai.ThinkingLevel(level) {
+		case genai.ThinkingLevelMinimal, genai.ThinkingLevelLow,
+			genai.ThinkingLevelMedium, genai.ThinkingLevelHigh:
+			return &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevel(level)}
+		}
+	}
+	budget := int32(192)
+	if raw := strings.TrimSpace(os.Getenv("GEMINI_PLAYER_THINKING_BUDGET")); raw != "" {
+		if parsed, err := strconv.ParseInt(raw, 10, 32); err == nil {
+			budget = int32(parsed)
+		}
+	}
+	return &genai.ThinkingConfig{ThinkingBudget: &budget}
+}
