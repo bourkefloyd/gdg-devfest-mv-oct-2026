@@ -51,6 +51,6 @@ put the same comma-separated list in `GATEWAY_API_KEYS` and `API_KEYS`.
 Otherwise the gateway's 2/s (burst 5) creation limit and 10-active-game cap
 measure per-key admission rather than gateway capacity.
 
-Use `K6_WEB_DASHBOARD=true K6_WEB_DASHBOARD_REPORT=loadtest/results/s1.html`
+Use `K6_WEB_DASHBOARD=true K6_WEB_DASHBOARD_PERIOD=1s K6_WEB_DASHBOARD_EXPORT=loadtest/results/s1.html`
 to retain the dashboard. Raw outputs under `loadtest/results/` are ignored so
 machine-specific runs are not accidentally committed.
