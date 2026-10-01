@@ -49,28 +49,31 @@ func seatsFromEnv(log *slog.Logger, workers *pool.Pool) api.SeatFunc {
 		log.Error("gemini client; falling back to mock players", "err", err)
 		return api.MockSeats(time.Second)
 	}
+	log.Info("players: real", "gemma_pool", workers != nil, "gemini_model", env("GEMINI_PLAYER_MODEL", "default"))
+	return realSeats(client, workers, geminiBreaker, os.Getenv("GEMINI_PLAYER_MODEL"),
+		os.Getenv("GEMINI_FALLBACK_MODEL"), env("GEMMA_MODEL", "gemma-4-e2b"))
+}
+
+func realSeats(client *genai.Client, workers *pool.Pool, breaker *router.CircuitBreaker, model, liteModel, gemmaModel string) api.SeatFunc {
 	dict := wordhunt.Default()
 	gemini := func(model string) players.Player {
-		return &router.BreakerPlayer{Breaker: geminiBreaker,
+		return &router.BreakerPlayer{Breaker: breaker,
 			Player: &router.RetryPlayer{Player: players.NewGeminiPlayer(client, model), Attempts: 3, Retryable: retryableGemini}}
 	}
-	geminiChain := []players.Player{gemini(os.Getenv("GEMINI_PLAYER_MODEL"))}
-	var spill players.Player
-	if lite := os.Getenv("GEMINI_FALLBACK_MODEL"); lite != "" {
-		spill = gemini(lite)
+	geminiChain := []players.Player{gemini(model)}
+	spill := geminiChain[0]
+	if liteModel != "" {
+		spill = gemini(liteModel)
 		geminiChain = append(geminiChain, spill)
-	} else {
-		spill = gemini(os.Getenv("GEMINI_PLAYER_MODEL"))
 	}
 	geminiChain = append(geminiChain, &players.SolverPlayer{Dict: dict, Limit: 6})
 
 	var gemmaChain []players.Player
 	if workers != nil {
-		gemmaChain = append(gemmaChain, &poolGemma{pool: workers, model: env("GEMMA_MODEL", "gemma-4-e2b")})
+		gemmaChain = append(gemmaChain, &poolGemma{pool: workers, model: gemmaModel})
 	}
 	gemmaChain = append(gemmaChain, spill, &players.SolverPlayer{Dict: dict, Limit: 3})
 
-	log.Info("players: real", "gemma_pool", workers != nil, "gemini_model", env("GEMINI_PLAYER_MODEL", "default"))
 	return func(m string) ([]players.Player, error) {
 		g := &router.FallbackPlayer{NameLabel: "gemini", Chain: geminiChain}
 		if m == api.ModeHuman {
