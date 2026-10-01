@@ -227,7 +227,7 @@ gcloud run deploy "$SERVICE" \
   --image="$IMAGE" \
   --service-account="wordrust-run@${PROJECT_ID}.iam.gserviceaccount.com" \
   --set-secrets="GATEWAY_API_KEYS=gateway-api-keys:latest,GEMINI_API_KEY=gemini-api-key:latest" \
-  --set-env-vars="HOST=0.0.0.0,PLAYERS=real,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=global,GEMINI_PLAYER_MODEL=gemini-3.8-flash,GEMINI_FALLBACK_MODEL=gemini-3.8-flash,GEMINI_COMMENTATOR_MODEL=gemini-3.8-flash,GEMINI_API_PLAYER_MODEL=gemini-3.8-flash,GEMINI_API_FALLBACK_MODEL=gemini-3.8-flash,MAX_ACTIVE_GAMES=2000" \
+  --set-env-vars="HOST=0.0.0.0,PLAYERS=real,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=global,GEMINI_PLAYER_MODEL=gemini-3.8-flash,GEMINI_FALLBACK_MODEL=gemini-3.8-flash,GEMINI_COMMENTATOR_MODEL=gemini-3.8-flash,GEMINI_API_PLAYER_MODEL=gemini-3.8-flash,GEMINI_API_FALLBACK_MODEL=gemini-3.8-flash,MAX_ACTIVE_GAMES=2000,ARENA_MAX_REAL_GAMES=12" \
   --port=8080 \
   --cpu=4 \
   --memory=2Gi \
