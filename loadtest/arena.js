@@ -59,6 +59,7 @@ export default function () {
     const snapshot = response.json();
     if (snapshot.status === "finished" || snapshot.status === "cancelled") {
       arenaSnapshot = snapshot;
+      console.log(`ARENA_FINAL_JSON:${JSON.stringify(snapshot)}`);
       for (const entry of snapshot.leaderboard || []) {
         gameLatency.add(entry.latency_ms);
       }
