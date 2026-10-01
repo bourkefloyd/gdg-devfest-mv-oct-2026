@@ -95,7 +95,11 @@ func main() {
 	}
 	srv := api.New(cfg)
 
-	addr := net.JoinHostPort(env("HOST", "127.0.0.1"), env("PORT", "8787"))
+	host := "127.0.0.1"
+	if os.Getenv("K_SERVICE") != "" {
+		host = "0.0.0.0" // Cloud Run routes traffic to $PORT on all interfaces
+	}
+	addr := net.JoinHostPort(env("HOST", host), env("PORT", "8787"))
 	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           srv.Handler(),
