@@ -11,6 +11,7 @@ const expected4xx = new Counter("expected_4xx");
 let exercised = false;
 
 export const options = {
+  summaryTrendStats: ["avg", "min", "med", "p(90)", "p(95)", "p(99)", "max"],
   scenarios: {
     gateway_capacity: {
       executor: "ramping-vus",
