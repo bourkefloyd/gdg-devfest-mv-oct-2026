@@ -21,16 +21,19 @@ weights finish downloading.
 |---|---:|---:|---|---|
 | S1 gateway capacity | pending game API | — | — | pending |
 | S2 real hybrid | pending model integration | — | — | pending |
-| S3 mock worker pool | 1 worker, 12 calls | 5.60 req/s | 2.143 s wall time | baseline |
-| S3 mock worker pool | 2 workers, 24 calls | 19.20 req/s | 1.250 s wall time | 3.43x baseline |
-| S3 mock worker pool | 4 workers, 48 calls | 38.35 req/s | 1.252 s wall time | 6.85x baseline |
+| S3 mock worker pool | 1 worker, 40 calls | 9.82 req/s | 4.072 s wall time | baseline |
+| S3 mock worker pool | 2 workers, 80 calls | 19.65 req/s | 4.071 s wall time | 2.00x baseline |
+| S3 mock worker pool | 4 workers, 160 calls | 39.31 req/s | 4.070 s wall time | 4.00x baseline |
 | S3 real Metal worker | c=1/4/8 | — | — | pending weights |
 | S4 abuse isolation | pending game API | — | — | pending |
 
-The first short S3 run includes approximately one second of `ghz` process
-startup in the one-worker baseline, so its scaling ratio is inflated. A longer
-repeat is the reportable run; the short run is retained only as a functional
-smoke test.
+```mermaid
+xychart-beta
+    title "S3 mock pool throughput"
+    x-axis "Workers" [1, 2, 4]
+    y-axis "Requests per second" 0 --> 45
+    line [9.82, 19.65, 39.31]
+```
 
 ## Interpretation
 
