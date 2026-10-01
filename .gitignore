@@ -13,6 +13,11 @@ models/
 # Go build artifacts
 go-gateway/gateway
 
+# Web build artifacts
+web/node_modules/
+web/dist/
+arena-web/
+
 # Environment and sensitive keys
 .env
 .env.*

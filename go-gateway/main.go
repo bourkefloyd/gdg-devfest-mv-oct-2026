@@ -94,6 +94,12 @@ func main() {
 		return st.Healthy > 0 || geminiReady(), d
 	}
 	srv := api.New(cfg)
+	arenaHandler := newArenaHandler()
+	srv.MountPublic("POST /api/arena/runs", arenaHandler)
+	srv.MountPublic("GET /api/arena/runs/{id}", arenaHandler)
+	srv.MountPublic("GET /api/arena/runs/{id}/events", arenaHandler)
+	srv.MountPublic("POST /api/arena/runs/{id}/cancel", arenaHandler)
+	srv.MountPublic("GET /", newArenaWebHandler())
 
 	host := "127.0.0.1"
 	if os.Getenv("K_SERVICE") != "" {

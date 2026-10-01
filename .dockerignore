@@ -1,0 +1,11 @@
+.git
+.github
+.env
+.env.*
+target
+models
+web/node_modules
+web/dist
+go-gateway/gateway
+graphify-out
+internal

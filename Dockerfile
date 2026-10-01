@@ -1,0 +1,29 @@
+# syntax=docker/dockerfile:1.7
+
+FROM node:24-alpine AS web
+WORKDIR /src/web
+COPY web/package*.json ./
+RUN npm ci
+COPY web/ ./
+RUN npm run build
+
+FROM golang:1.27-alpine AS gateway
+WORKDIR /src/go-gateway
+COPY go-gateway/go.mod go-gateway/go.sum ./
+RUN go mod download
+COPY go-gateway/ ./
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/gateway .
+
+FROM gcr.io/distroless/static-debian12:nonroot
+WORKDIR /app
+COPY --from=gateway /out/gateway /app/gateway
+COPY --from=web /src/web/dist /app/web
+
+ENV HOST=0.0.0.0 \
+    PORT=8080 \
+    PLAYERS=mock \
+    GATEWAY_API_KEYS=arena-local \
+    ARENA_STATIC_DIR=/app/web
+EXPOSE 8080
+USER nonroot:nonroot
+ENTRYPOINT ["/app/gateway"]
