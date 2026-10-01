@@ -8,6 +8,8 @@ import (
 
 	"go-gateway/internal/players"
 	"go-gateway/internal/wordhunt"
+
+	"google.golang.org/genai"
 )
 
 type scriptedPlayer struct {
@@ -67,5 +69,21 @@ func TestFallbackPlayer(t *testing.T) {
 	}
 	if !result.Fallback || result.Backend != "test" {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestGeminiRetryable(t *testing.T) {
+	for _, err := range []error{
+		context.DeadlineExceeded,
+		genai.APIError{Code: 429},
+		genai.APIError{Code: 500},
+		genai.APIError{Code: 503},
+	} {
+		if !GeminiRetryable(err) {
+			t.Fatalf("expected retryable: %v", err)
+		}
+	}
+	if GeminiRetryable(genai.APIError{Code: 400}) {
+		t.Fatal("400 must not be retried")
 	}
 }
