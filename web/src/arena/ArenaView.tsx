@@ -16,6 +16,7 @@ function App() {
   const [now, setNow] = useState(Date.now());
   const closeStream = useRef<() => void>(() => undefined);
   const request = useRef<AbortController | null>(null);
+  const autoStarted = useRef(false);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 500);
@@ -53,6 +54,12 @@ function App() {
       if (!controller.signal.aborted) dispatch({ type: "failure", message: error instanceof Error ? error.message : "Unable to start arena" });
     }
   }, [count]);
+
+  useEffect(() => {
+    if (autoStarted.current || new URLSearchParams(window.location.search).get("autostart") !== "24") return;
+    autoStarted.current = true;
+    void startRun();
+  }, [startRun]);
 
   const stopRun = useCallback(async () => {
     if (!state.runId) return;
