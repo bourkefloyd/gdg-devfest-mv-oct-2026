@@ -207,7 +207,7 @@ func TestDefaultSolverPublishesWordPathsAndLeaderboard(t *testing.T) {
 		t.Fatalf("leaderboard length = %d", len(snapshot.Leaderboard))
 	}
 	for _, entry := range snapshot.Leaderboard {
-		if entry.Name == "" || entry.Backend != "solver" || entry.Model != "trie-dfs" {
+		if entry.Name == "" || entry.Backend != "solver-bot" || entry.Model != "trie-dfs · paced mock" {
 			t.Fatalf("incomplete leaderboard entry: %#v", entry)
 		}
 	}
@@ -221,7 +221,7 @@ func TestHTTPStartSSESnapshotAndCancel(t *testing.T) {
 	server := httptest.NewServer(manager)
 	defer server.Close()
 
-	response, err := http.Post(server.URL+"/arena/start", "application/json", strings.NewReader(`{"n":2,"duration_ms":1000}`))
+	response, err := http.Post(server.URL+"/api/arena/runs", "application/json", strings.NewReader(`{"count":2,"duration_ms":1000}`))
 	if err != nil {
 		t.Fatal(err)
 	}
