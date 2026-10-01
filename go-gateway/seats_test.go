@@ -71,7 +71,7 @@ func play(p players.Player) (players.Result, error) {
 
 func TestGemini503TwiceThenSuccess(t *testing.T) {
 	client, calls := fakeGemini(t, 2)
-	p := seat(t, realSeats(client, nil, router.NewCircuitBreaker(), "m", "", "g"), "gemini")
+	p := seat(t, realSeats(client, nil, router.NewCircuitBreaker(), seatOpts{Model: "m"}), "gemini")
 	res, err := play(p)
 	if err != nil || res.Fallback || res.Backend != "gemini-api" || len(res.Claims) != 2 {
 		t.Fatalf("res=%+v err=%v", res, err)
@@ -84,7 +84,7 @@ func TestGemini503TwiceThenSuccess(t *testing.T) {
 func TestGeminiDownFallsBackAndBreakerOpens(t *testing.T) {
 	client, calls := fakeGemini(t, -1)
 	breaker := router.NewCircuitBreaker()
-	p := seat(t, realSeats(client, nil, breaker, "m", "", "g"), "gemini")
+	p := seat(t, realSeats(client, nil, breaker, seatOpts{Model: "m"}), "gemini")
 	for i := 0; i < 5; i++ {
 		res, err := play(p)
 		if err != nil || !res.Fallback || res.Backend != "solver" {
@@ -131,7 +131,7 @@ func TestGemmaKilledMidStreamFallsBackToGemini(t *testing.T) {
 	t.Cleanup(workers.Close)
 
 	client, _ := fakeGemini(t, 0)
-	p := seat(t, realSeats(client, workers, router.NewCircuitBreaker(), "m", "", "g"), "gemma")
+	p := seat(t, realSeats(client, workers, router.NewCircuitBreaker(), seatOpts{Model: "m"}), "gemma")
 	res, err := play(p)
 	if err != nil || !res.Fallback || res.Backend != "gemini-api" {
 		t.Fatalf("res=%+v err=%v", res, err)

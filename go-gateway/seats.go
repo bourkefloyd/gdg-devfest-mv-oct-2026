@@ -30,7 +30,12 @@ func geminiConfigured() bool {
 // seatsFromEnv wires players per mode. PLAYERS=mock (default when no Gemini
 // credentials are set) uses deterministic mocks; PLAYERS=real uses Gemini and
 // the Gemma pool with the failover chain from the plan.
-func seatsFromEnv(log *slog.Logger, workers *pool.Pool) api.SeatFunc {
+type wiring struct {
+	seats, agentSeats api.SeatFunc
+	commentator       players.Commentator
+}
+
+func seatsFromEnv(log *slog.Logger, workers *pool.Pool) (w wiring) {
 	mode := env("PLAYERS", "")
 	if mode == "" {
 		mode = "mock"
@@ -41,36 +46,65 @@ func seatsFromEnv(log *slog.Logger, workers *pool.Pool) api.SeatFunc {
 	os.Setenv("PLAYERS", mode)
 	if mode != "real" {
 		log.Info("players: mock")
-		return api.MockSeats(time.Duration(envInt("MOCK_LATENCY_MS", 1000)) * time.Millisecond)
+		w.seats = api.MockSeats(time.Duration(envInt("MOCK_LATENCY_MS", 1000)) * time.Millisecond)
+		return w
 	}
 
 	client, err := players.NewGenAIClient(context.Background())
 	if err != nil {
 		log.Error("gemini client; falling back to mock players", "err", err)
-		return api.MockSeats(time.Second)
+		w.seats = api.MockSeats(time.Second)
+		return w
 	}
 	log.Info("players: real", "gemma_pool", workers != nil, "gemini_model", env("GEMINI_PLAYER_MODEL", "default"))
-	return realSeats(client, workers, geminiBreaker, os.Getenv("GEMINI_PLAYER_MODEL"),
-		os.Getenv("GEMINI_FALLBACK_MODEL"), env("GEMMA_MODEL", "gemma-4-e2b"))
+	o := seatOpts{
+		Model:       os.Getenv("GEMINI_PLAYER_MODEL"),
+		LiteModel:   os.Getenv("GEMINI_FALLBACK_MODEL"),
+		GemmaModel:  env("GEMMA_MODEL", "gemma-4-e2b"),
+		HostedGemma: os.Getenv("GEMMA_HOSTED_MODEL"),
+	}
+	w.seats = realSeats(client, workers, geminiBreaker, o)
+	o.Agent = true
+	w.agentSeats = realSeats(client, workers, geminiBreaker, o)
+	w.commentator = players.NewGeminiCommentator(client, os.Getenv("GEMINI_COMMENTATOR_MODEL"))
+	return w
 }
 
-func realSeats(client *genai.Client, workers *pool.Pool, breaker *router.CircuitBreaker, model, liteModel, gemmaModel string) api.SeatFunc {
+type seatOpts struct {
+	Model, LiteModel, GemmaModel string
+	HostedGemma                  string // empty disables the hosted Gemma tier
+	Agent                        bool   // Gemini seat uses the submit_words agent loop
+}
+
+var hostedGemmaBreaker = router.NewCircuitBreaker()
+
+func realSeats(client *genai.Client, workers *pool.Pool, breaker *router.CircuitBreaker, o seatOpts) api.SeatFunc {
 	dict := wordhunt.Default()
-	gemini := func(model string) players.Player {
-		return &router.BreakerPlayer{Breaker: breaker,
-			Player: &router.RetryPlayer{Player: players.NewGeminiPlayer(client, model), Attempts: 3, Retryable: retryableGemini}}
+	wrap := func(p players.Player, b *router.CircuitBreaker) players.Player {
+		return &router.BreakerPlayer{Breaker: b,
+			Player: &router.RetryPlayer{Player: p, Attempts: 3, Retryable: retryableGemini}}
 	}
-	geminiChain := []players.Player{gemini(model)}
-	spill := geminiChain[0]
-	if liteModel != "" {
-		spill = gemini(liteModel)
+	gemini := func(model string) players.Player { return wrap(players.NewGeminiPlayer(client, model), breaker) }
+
+	primary := gemini(o.Model)
+	spill := primary
+	var geminiChain []players.Player
+	if o.Agent {
+		geminiChain = append(geminiChain, &router.BreakerPlayer{Breaker: breaker, Player: players.NewGeminiAgent(client, o.Model, dict)})
+	}
+	geminiChain = append(geminiChain, primary)
+	if o.LiteModel != "" {
+		spill = gemini(o.LiteModel)
 		geminiChain = append(geminiChain, spill)
 	}
 	geminiChain = append(geminiChain, &players.SolverPlayer{Dict: dict, Limit: 6})
 
 	var gemmaChain []players.Player
 	if workers != nil {
-		gemmaChain = append(gemmaChain, &poolGemma{pool: workers, model: gemmaModel})
+		gemmaChain = append(gemmaChain, &poolGemma{pool: workers, model: o.GemmaModel})
+	}
+	if o.HostedGemma != "" {
+		gemmaChain = append(gemmaChain, wrap(players.NewHostedGemmaPlayer(client, o.HostedGemma), hostedGemmaBreaker))
 	}
 	gemmaChain = append(gemmaChain, spill, &players.SolverPlayer{Dict: dict, Limit: 3})
 
