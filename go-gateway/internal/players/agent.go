@@ -79,12 +79,22 @@ func (p *GeminiAgent) Play(ctx context.Context, b wordhunt.Board, deadline time.
 	var raw strings.Builder
 	for turn := 0; turn < 4; turn++ {
 		calls := response.FunctionCalls()
-		if len(calls) != 1 || calls[0].Name != "submit_words" {
-			return Result{}, errors.New("agent made an unknown or ambiguous tool call")
+		if len(calls) == 0 {
+			if turn > 0 {
+				break
+			}
+			return Result{}, errors.New("agent did not call submit_words")
 		}
-		words, err := wordsArgument(calls[0].Args)
-		if err != nil {
-			return Result{}, err
+		var words []string
+		for _, call := range calls {
+			if call.Name != "submit_words" {
+				return Result{}, fmt.Errorf("agent called unknown tool %q", call.Name)
+			}
+			submitted, err := wordsArgument(call.Args)
+			if err != nil {
+				return Result{}, err
+			}
+			words = append(words, submitted...)
 		}
 		verdicts := make([]map[string]any, 0, len(words))
 		for _, candidate := range words {
