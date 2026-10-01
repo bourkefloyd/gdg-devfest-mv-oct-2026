@@ -205,6 +205,7 @@ func writeSSE(w io.Writer, event Event) error {
 func arenaPath(path string) []string {
 	path = strings.TrimSpace(path)
 	path = strings.TrimPrefix(path, "/")
+	path = strings.TrimPrefix(path, "api/")
 	if path == "arena" {
 		return nil
 	}

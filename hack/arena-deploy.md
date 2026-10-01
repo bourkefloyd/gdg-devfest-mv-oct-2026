@@ -9,14 +9,14 @@ dictionary and solver, so it needs no model weights or API keys.
 ```bash
 # Builds the Vite app, then serves UI + API on one port.
 make arena
-# http://localhost:8787/arena/
+# http://localhost:8787/
 ```
 
 Or with Docker:
 
 ```bash
 docker compose up --build
-# http://localhost:8787/arena/
+# http://localhost:8787/
 ```
 
 Set `ARENA_PORT=9090` to change the host port. The arena caps each launch at
@@ -48,7 +48,7 @@ gcloud run deploy word-hunt-arena \
   --region "$REGION" \
   --image "$IMAGE" \
   --allow-unauthenticated \
-  --set-env-vars "HOST=0.0.0.0,PLAYERS=mock,GATEWAY_API_KEYS=arena-local,ARENA_STATIC_DIR=/app/arena-web" \
+  --set-env-vars "HOST=0.0.0.0,PLAYERS=mock,GATEWAY_API_KEYS=arena-local,ARENA_STATIC_DIR=/app/web" \
   --concurrency 100 \
   --cpu 2 \
   --memory 512Mi \

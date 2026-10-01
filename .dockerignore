@@ -5,8 +5,7 @@
 target
 models
 web/node_modules
-arena-web/node_modules
-arena-web/dist
+web/dist
 go-gateway/gateway
 graphify-out
 internal

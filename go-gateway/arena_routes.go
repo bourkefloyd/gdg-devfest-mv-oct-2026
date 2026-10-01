@@ -19,14 +19,13 @@ func newArenaHandler() http.Handler {
 func newArenaWebHandler() http.Handler {
 	root := os.Getenv("ARENA_STATIC_DIR")
 	if root == "" {
-		root = "../arena-web/dist"
+		root = "../web/dist"
 	}
 	files := os.DirFS(root)
 	server := http.FileServerFS(files)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/arena")
-		name = strings.TrimPrefix(name, "/")
+		name := strings.TrimPrefix(path.Clean(r.URL.Path), "/")
 		if name == "" {
 			name = "index.html"
 		}

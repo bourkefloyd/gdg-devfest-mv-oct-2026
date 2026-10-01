@@ -76,6 +76,7 @@ type Config struct {
 // StartRequest starts N independent games. Duration bounds each player move.
 type StartRequest struct {
 	N          int           `json:"n,omitempty"`
+	Count      int           `json:"count,omitempty"`
 	Duration   time.Duration `json:"-"`
 	DurationMS int64         `json:"duration_ms,omitempty"`
 	DurationS  float64       `json:"duration_s,omitempty"`
@@ -233,7 +234,7 @@ func withDefaults(cfg Config) Config {
 		cfg.MaxConcurrent = cfg.MaxGames
 	}
 	if cfg.DefaultDuration <= 0 {
-		cfg.DefaultDuration = 3 * time.Second
+		cfg.DefaultDuration = 5 * time.Second
 	}
 	if cfg.MinDuration <= 0 {
 		cfg.MinDuration = 50 * time.Millisecond
@@ -269,8 +270,11 @@ func withDefaults(cfg Config) Config {
 	}
 	if cfg.PlayerFactory == nil {
 		dict, limit := cfg.Dictionary, cfg.WordsPerGame
-		cfg.PlayerFactory = func(context.Context, GameSpec) (players.Player, error) {
-			return &players.SolverPlayer{Dict: dict, Limit: limit}, nil
+		cfg.PlayerFactory = func(_ context.Context, spec GameSpec) (players.Player, error) {
+			return &pacedSolverPlayer{
+				inner: &players.SolverPlayer{Dict: dict, Limit: limit},
+				delay: 180*time.Millisecond + time.Duration(spec.Index%9)*45*time.Millisecond,
+			}, nil
 		}
 	}
 	return cfg
@@ -278,6 +282,9 @@ func withDefaults(cfg Config) Config {
 
 func (m *Manager) validate(req StartRequest) (int, time.Duration, error) {
 	n := req.N
+	if n == 0 {
+		n = req.Count
+	}
 	if n == 0 {
 		n = m.cfg.DefaultGames
 	}
@@ -409,7 +416,7 @@ func (r *Run) StartResponse() StartResponse {
 		N:          r.n,
 		DurationMS: r.duration.Milliseconds(),
 		StartedAt:  r.started,
-		EventsURL:  "/arena/runs/" + r.id + "/events",
+		EventsURL:  "/api/arena/runs/" + r.id + "/events",
 	}
 }
 
@@ -553,8 +560,43 @@ func (r *Run) play(index int) {
 			TotalScore: entry.Score,
 			Stats:      pointer(r.currentStats()),
 		})
+		delay := 85*time.Millisecond + time.Duration((index+len(entry.Words))%6)*18*time.Millisecond
+		if !waitContext(r.ctx, delay) {
+			break
+		}
 	}
 	r.complete(entry)
+}
+
+type pacedSolverPlayer struct {
+	inner *players.SolverPlayer
+	delay time.Duration
+}
+
+func (*pacedSolverPlayer) Name() string { return "Solver bot" }
+
+func (p *pacedSolverPlayer) Play(ctx context.Context, board wordhunt.Board, deadline time.Time) (players.Result, error) {
+	start := time.Now()
+	if !waitContext(ctx, p.delay) {
+		return players.Result{}, ctx.Err()
+	}
+	result, err := p.inner.Play(ctx, board, deadline)
+	result.Backend = "solver-bot"
+	result.Model = "trie-dfs · paced mock"
+	result.Fallback = false
+	result.Latency = time.Since(start)
+	return result, err
+}
+
+func waitContext(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 func (r *Run) complete(entry LeaderboardEntry) {

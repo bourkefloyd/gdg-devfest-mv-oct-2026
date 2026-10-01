@@ -8,7 +8,7 @@ services:
       PORT: "8080"
       PLAYERS: mock
       GATEWAY_API_KEYS: arena-local
-      ARENA_STATIC_DIR: /app/arena-web
+      ARENA_STATIC_DIR: /app/web
     ports:
       - "${ARENA_PORT:-8787}:8080"
     init: true

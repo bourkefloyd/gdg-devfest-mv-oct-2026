@@ -21,7 +21,7 @@ final AI-player leaderboard, and runs without model credentials by default.
 
 ```bash
 make arena
-# open http://localhost:8787/arena/
+# open http://localhost:8787/
 
 # Or build the same one-port container used for Cloud Run:
 docker compose up --build
