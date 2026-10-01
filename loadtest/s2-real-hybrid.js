@@ -9,7 +9,6 @@ const geminiMove = new Trend("gemini_move_seconds");
 const completed = new Rate("games_scored");
 const userErrors = new Rate("user_visible_errors");
 const fallback = new Counter("fallback_total_observed");
-const gemini429 = new Counter("gemini_429_observed");
 let exercised = false;
 
 export const options = {
@@ -57,7 +56,6 @@ export default function () {
   );
   if (![200, 201].includes(create.status)) {
     userErrors.add(true);
-    if (create.status === 429) gemini429.add(1);
     return;
   }
   const game = create.json();

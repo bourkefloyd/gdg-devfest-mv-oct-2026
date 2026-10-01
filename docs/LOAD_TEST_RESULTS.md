@@ -20,7 +20,8 @@ be filled after the Gemma weights finish downloading.
 | Scenario | Load | Throughput | Latency / errors | Result |
 |---|---:|---:|---|---|
 | S1 gateway capacity | 1,000 VUs, 21,000 requests/run | 2,799 req/s median; ~8,000 games/min | create p50/p95/p99 0.284/0.623/1.069 ms; submit 0.127/0.341/0.707 ms; 0 unexpected errors | pass |
-| S2 real hybrid | pending model integration | — | — | pending |
+| S2 preflight | real Gemini + 1 serialized mock Gemma worker; 10→25→50 VUs | 50 games; 100% scored; 0 visible errors | Gemini p50/p95/p99 4.362/7.385/7.885 s; game p50/p95 8.535/9.793 s; 54% move fallback | partial: p50 missed |
+| S2 real hybrid | real Gemini + real Metal Gemma | — | — | pending weights |
 | S3 mock worker pool | 1 worker, 40 calls | 9.82 req/s | 4.072 s wall time | baseline |
 | S3 mock worker pool | 2 workers, 80 calls | 19.65 req/s | 4.071 s wall time | 2.00x baseline |
 | S3 mock worker pool | 4 workers, 160 calls | 39.31 req/s | 4.070 s wall time | 4.00x baseline |
@@ -55,6 +56,21 @@ while a separate key flooded at 200 requests/s, comfortably within the target
 of no more than a 20% regression. The attacker received 429 on 1,980 of 2,000
 requests (99.0%), while the normal player continued at 1 game/s. No request
 returned 5xx.
+
+## S2 preflight notes
+
+Before the 10.2 GB Gemma weight transfer completed, S2 used the real
+`gemini-3.8-flash` API and one mock gRPC worker configured with concurrency 1,
+2 s latency, and ±0.5 s jitter. This exercises the real Gemini path and the
+same worker-pool queue/spill behavior without claiming Metal inference numbers.
+
+All 50 games completed with scores and no user-visible errors. Gemini met its
+p95 and p99 targets but missed p50 by 0.362 s. Fifty-four of 100 player moves
+fell back under the burst. Cumulative Prometheus labels showed fallback reaching
+both seats (`solver` for Gemini, `gemini-api`/`solver` for Gemma), confirming
+that the completion SLO held even while the nominal fallback target did not.
+Backend-specific Gemini 429s are not exposed separately by the current metrics,
+so this report does not infer a 429 count from fallback events.
 
 ## Interpretation
 
