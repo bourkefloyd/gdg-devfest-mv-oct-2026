@@ -62,7 +62,11 @@ export default function () {
       return;
     }
     state = response.json();
-    if (["complete", "completed", "game_over"].includes(state.status) || state.game_over) break;
+    if (
+      ["complete", "completed", "game_over"].includes(state.status) ||
+      state.game_over ||
+      state.over
+    ) break;
     sleep(0.25);
   }
 
