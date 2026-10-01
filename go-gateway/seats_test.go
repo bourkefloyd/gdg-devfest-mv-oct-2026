@@ -100,6 +100,14 @@ func TestGeminiDownFallsBackAndBreakerOpens(t *testing.T) {
 	}
 }
 
+func TestGemmaSeatWithoutPoolIsLabeledFallback(t *testing.T) {
+	client, _ := fakeGemini(t, 0)
+	res, err := play(seat(t, realSeats(client, nil, router.NewCircuitBreaker(), seatOpts{Model: "m"}), "gemma"))
+	if err != nil || !res.Fallback || res.Backend != "gemini-api" {
+		t.Fatalf("res=%+v err=%v", res, err)
+	}
+}
+
 type dyingWorker struct {
 	pb.UnimplementedInferenceServiceServer
 	calls atomic.Int32

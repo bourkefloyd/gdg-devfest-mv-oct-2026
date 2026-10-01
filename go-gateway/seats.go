@@ -106,7 +106,7 @@ func realSeats(client *genai.Client, workers *pool.Pool, breaker *router.Circuit
 	if o.HostedGemma != "" {
 		gemmaChain = append(gemmaChain, wrap(players.NewHostedGemmaPlayer(client, o.HostedGemma), hostedGemmaBreaker))
 	}
-	gemmaChain = append(gemmaChain, spill, &players.SolverPlayer{Dict: dict, Limit: 3})
+	gemmaChain = append(gemmaChain, labeledFallback{spill}, &players.SolverPlayer{Dict: dict, Limit: 3})
 
 	return func(m string) ([]players.Player, error) {
 		g := &router.FallbackPlayer{NameLabel: "gemini", Chain: geminiChain}
@@ -115,6 +115,16 @@ func realSeats(client *genai.Client, workers *pool.Pool, breaker *router.Circuit
 		}
 		return []players.Player{g, &router.FallbackPlayer{NameLabel: "gemma", Chain: gemmaChain}}, nil
 	}
+}
+
+// labeledFallback marks results as fallback even when it heads the chain, so
+// Gemma's seat served by Gemini (no local pool) is never shown as Gemma.
+type labeledFallback struct{ players.Player }
+
+func (l labeledFallback) Play(ctx context.Context, b wordhunt.Board, deadline time.Time) (players.Result, error) {
+	res, err := l.Player.Play(ctx, b, deadline)
+	res.Fallback = true
+	return res, err
 }
 
 // retryableGemini follows the plan: retry 429/500/503 and deadlines, never 4xx.
