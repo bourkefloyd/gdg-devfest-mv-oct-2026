@@ -13,6 +13,23 @@ A production-grade, multi-tier streaming inference system for **Google's Gemma 4
 * **Go API Gateway (`go-gateway/`):** High-concurrency HTTP web server handling client traffic, managing connection lifecycles, and streaming tokens over Server-Sent Events (SSE).
 * **Shared Interface (`proto/inference.proto`):** Type-safe bidirectional gRPC streaming contract.
 
+## Word Hunt Arena
+
+Launch 24–100 concurrent in-memory Word Hunt games and watch each solver swipe
+the board live. The arena includes aggregate throughput/latency stats and a
+final AI-player leaderboard, and runs without model credentials by default.
+
+```bash
+make arena
+# open http://localhost:8787/arena/
+
+# Or build the same one-port container used for Cloud Run:
+docker compose up --build
+```
+
+See [`hack/arena-deploy.md`](hack/arena-deploy.md) for configuration and
+Cloud Run build steps.
+
 ---
 
 ## System Architecture

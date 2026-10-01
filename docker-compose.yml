@@ -1,0 +1,14 @@
+services:
+  arena:
+    build:
+      context: .
+      dockerfile: Dockerfile.arena
+    environment:
+      HOST: 0.0.0.0
+      PORT: "8080"
+      PLAYERS: mock
+      GATEWAY_API_KEYS: arena-local
+      ARENA_STATIC_DIR: /app/arena-web
+    ports:
+      - "${ARENA_PORT:-8787}:8080"
+    init: true

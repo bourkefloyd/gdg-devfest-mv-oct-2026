@@ -1,0 +1,12 @@
+.git
+.github
+.env
+.env.*
+target
+models
+web/node_modules
+arena-web/node_modules
+arena-web/dist
+go-gateway/gateway
+graphify-out
+internal
