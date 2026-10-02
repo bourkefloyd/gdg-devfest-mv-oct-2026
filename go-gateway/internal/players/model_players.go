@@ -264,11 +264,6 @@ func (p *HostedGemmaPlayer) Play(ctx context.Context, b wordhunt.Board, deadline
 	if p.Client == nil {
 		return Result{}, errors.New("nil hosted Gemma client")
 	}
-	release, err := acquireGemma(ctx, p.Model)
-	if err != nil {
-		return Result{}, err
-	}
-	defer release()
 	ctx, cancel := moveContext(ctx, deadline)
 	defer cancel()
 	instruction := "Immediately return up to 25 likely words. No explanation. Exactly one line: WORDS: word, word, word"
@@ -296,9 +291,13 @@ func (p *HostedGemmaPlayer) Play(ctx context.Context, b wordhunt.Board, deadline
 	}
 	raw := resp.Text()
 	claims, err := ParseGemmaOutput(raw)
+	backend := "gemini-api-hosted-gemma"
+	if p.Client.ClientConfig().Backend == genai.BackendVertexAI {
+		backend = "vertex-hosted-gemma"
+	}
 	return Result{
 		Claims:  claims,
-		Backend: "gemini-api-hosted-gemma",
+		Backend: backend,
 		Model:   p.Model,
 		Latency: time.Since(start),
 		Raw:     raw,
@@ -395,23 +394,91 @@ func geminiSearchPrompt(b wordhunt.Board, maxWords int) string {
 		"Never reuse an index in one word."
 }
 
-// gemmaFlight queues hosted Gemma calls per model. gemma-4-31b-it's tier-2
-// cap is 30 generateContent requests; a burst past that returns 429.
-var gemmaFlight sync.Map
+// Gemini API Gemma 4 models allow 30 generateContent requests per minute.
+// ARENA_GEMMA_RPM stays under that cap; 0 disables the limiter.
+type requestWindow struct {
+	mu     sync.Mutex
+	stamps []time.Time
+}
 
-func acquireGemma(ctx context.Context, model string) (func(), error) {
-	n := int(envInt32("ARENA_GEMMA_MAX_INFLIGHT", 8, 0, 64))
-	if n == 0 {
+func (w *requestWindow) take(now time.Time, limit int, window time.Duration) (time.Duration, bool) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	cutoff := now.Add(-window)
+	kept := w.stamps[:0]
+	for _, stamp := range w.stamps {
+		if stamp.After(cutoff) {
+			kept = append(kept, stamp)
+		}
+	}
+	w.stamps = kept
+	if len(w.stamps) < limit {
+		w.stamps = append(w.stamps, now)
+		return 0, true
+	}
+	return w.stamps[0].Add(window).Sub(now), false
+}
+
+var (
+	gemmaWindows     sync.Map
+	vertexGemmaSlots sync.Map
+	geminiSlots      sync.Map
+)
+
+func waitWindow(ctx context.Context, gates *sync.Map, key string, limit int, window time.Duration) (func(), error) {
+	value, _ := gates.LoadOrStore(key, &requestWindow{})
+	gate := value.(*requestWindow)
+	for {
+		wait, ok := gate.take(time.Now(), limit, window)
+		if ok {
+			return func() {}, nil
+		}
+		if wait < 20*time.Millisecond {
+			wait = 20 * time.Millisecond
+		}
+		timer := time.NewTimer(wait)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return func() {}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// AcquireGemma waits until this model is under its per-minute request cap.
+func AcquireGemma(ctx context.Context, model string) (func(), error) {
+	limit := int(envInt32("ARENA_GEMMA_RPM", 28, 0, 30))
+	if limit == 0 {
 		return func() {}, nil
 	}
-	ch, _ := gemmaFlight.LoadOrStore(model, make(chan struct{}, n))
-	slot := ch.(chan struct{})
+	return waitWindow(ctx, &gemmaWindows, model, limit, time.Minute)
+}
+
+func acquireSlots(ctx context.Context, gates *sync.Map, key string, n int) (func(), error) {
+	if n <= 0 {
+		return func() {}, nil
+	}
+	value, _ := gates.LoadOrStore(key, make(chan struct{}, n))
+	slot := value.(chan struct{})
 	select {
 	case slot <- struct{}{}:
 		return func() { <-slot }, nil
 	case <-ctx.Done():
 		return func() {}, ctx.Err()
 	}
+}
+
+// AcquireVertexGemma bounds concurrent managed-Vertex Gemma calls.
+func AcquireVertexGemma(ctx context.Context) (func(), error) {
+	n := int(envInt32("ARENA_VERTEX_GEMMA_MAX_INFLIGHT", 24, 0, 30))
+	return acquireSlots(ctx, &vertexGemmaSlots, "vertex-gemma", n)
+}
+
+// AcquireGemini bounds concurrent Gemini agent calls.
+func AcquireGemini(ctx context.Context) (func(), error) {
+	n := int(envInt32("ARENA_GEMINI_MAX_INFLIGHT", 8, 0, 64))
+	return acquireSlots(ctx, &geminiSlots, "gemini", n)
 }
 
 func moveContext(parent context.Context, deadline time.Time) (context.Context, context.CancelFunc) {

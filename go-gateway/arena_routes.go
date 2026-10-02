@@ -12,9 +12,9 @@ import (
 	"google.golang.org/genai"
 )
 
-func newArenaHandler(client *genai.Client) http.Handler {
+func newArenaHandler(api, vertex *genai.Client) http.Handler {
 	return arena.NewHandler(arena.Config{
-		PlayerFactory:   newArenaProfileFactory(client),
+		PlayerFactory:   newArenaProfileFactory(api, vertex),
 		DefaultDuration: time.Duration(envInt("ARENA_GAME_SECONDS", 10)) * time.Second,
 	})
 }

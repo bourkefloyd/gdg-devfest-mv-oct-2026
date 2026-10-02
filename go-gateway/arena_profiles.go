@@ -22,29 +22,74 @@ type arenaProfile struct {
 }
 
 func arenaProfiles() []arenaProfile {
-	gemma := env("ARENA_PROFILE_GEMMA_BASELINE_MODEL", "gemma-4-26b-a4b-it")
 	return []arenaProfile{
-		{Name: "Gemini 3.8 Flash", Percent: profilePercent("ARENA_PROFILE_GEMINI_AGENT_PERCENT", 10), Backend: "google-genai", ModelID: env("ARENA_PROFILE_GEMINI_AGENT_MODEL", "gemini-3.8-flash"), Strategy: "submit-words-agent"},
-		{Name: "Gemma 4 26B A4B", Percent: profilePercent("ARENA_PROFILE_GEMMA_BASELINE_PERCENT", 30), Backend: "gemini-api-hosted-gemma", ModelID: gemma, Strategy: "baseline"},
-		{Name: "Gemma 4 31B diffusion (mock)", Percent: profilePercent("ARENA_PROFILE_GEMMA_DIFFUSION_PERCENT", 30), Backend: "gemini-api-hosted-gemma", ModelID: env("ARENA_PROFILE_GEMMA_DIFFUSION_MODEL", gemma), Strategy: "diffusion"},
-		{Name: "Gemma 4 31B diffusion JEV (mock)", Percent: profilePercent("ARENA_PROFILE_GEMMA_JEV_PERCENT", 30), Backend: "gemini-api-hosted-gemma", ModelID: env("ARENA_PROFILE_GEMMA_JEV_MODEL", gemma), Strategy: "diffusion-jev"},
+		{Name: "Gemini 3.8 Flash", Percent: profilePercent("ARENA_PROFILE_GEMINI_AGENT_PERCENT", 50), Backend: "google-genai", ModelID: env("ARENA_PROFILE_GEMINI_AGENT_MODEL", "gemini-3.8-flash"), Strategy: "submit-words-agent"},
+		{Name: "Gemma 4 26B A4B", Percent: profilePercent("ARENA_PROFILE_GEMMA_BASELINE_PERCENT", 50), Backend: "gemini-api-hosted-gemma", ModelID: env("ARENA_PROFILE_GEMMA_BASELINE_MODEL", "gemma-4-26b-a4b-it"), Strategy: "baseline"},
 	}
 }
 
-func newArenaProfileFactory(client *genai.Client) arena.PlayerFactory {
+func vertexGemmaEnabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("ARENA_GEMMA_VERTEX"))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
+}
+
+func newArenaProfileFactory(api, vertex *genai.Client) arena.PlayerFactory {
 	profiles := arenaProfiles()
 	return func(_ context.Context, spec arena.GameSpec) (players.Player, error) {
 		profile := chooseProfile(profiles, spec.Index, spec.Total)
 		var player players.Player
-		if client == nil {
-			player = errorPlayer{err: errors.New("Google GenAI client is unavailable")}
-		} else if profile.Strategy == "submit-words-agent" {
-			player = players.NewGeminiAgent(client, profile.ModelID, wordhunt.Default())
-		} else {
-			player = players.NewProfiledHostedGemmaPlayer(client, profile.ModelID, profile.Name, profile.Strategy)
+		var acquire func(context.Context) (func(), error)
+		switch {
+		case profile.Strategy == "submit-words-agent":
+			if api == nil {
+				player = errorPlayer{err: errors.New("Google GenAI client is unavailable")}
+				break
+			}
+			player = players.NewGeminiAgent(api, profile.ModelID, wordhunt.Default())
+			acquire = players.AcquireGemini
+		case profile.Strategy == "baseline" && vertexGemmaEnabled():
+			if vertex == nil {
+				player = errorPlayer{err: errors.New("Vertex Gemma is enabled but the Vertex client is unavailable")}
+				break
+			}
+			profile.ModelID = env("ARENA_GEMMA_VERTEX_MODEL", "gemma-4-26b-a4b-it-maas")
+			profile.Backend = "vertex-hosted-gemma"
+			player = players.NewProfiledHostedGemmaPlayer(vertex, profile.ModelID, profile.Name, profile.Strategy)
+			acquire = players.AcquireVertexGemma
+		default:
+			if api == nil {
+				player = errorPlayer{err: errors.New("Google GenAI client is unavailable")}
+				break
+			}
+			model := profile.ModelID
+			player = players.NewProfiledHostedGemmaPlayer(api, model, profile.Name, profile.Strategy)
+			acquire = func(ctx context.Context) (func(), error) {
+				return players.AcquireGemma(ctx, model)
+			}
+		}
+		if acquire != nil {
+			player = slotPlayer{Player: player, acquire: acquire}
 		}
 		return &arenaRetryPlayer{Player: player, Profile: profile}, nil
 	}
+}
+
+type slotPlayer struct {
+	players.Player
+	acquire func(context.Context) (func(), error)
+}
+
+func (p slotPlayer) Play(ctx context.Context, board wordhunt.Board, deadline time.Time) (players.Result, error) {
+	release, err := p.acquire(ctx)
+	if err != nil {
+		return players.Result{}, err
+	}
+	defer release()
+	return p.Player.Play(ctx, board, deadline)
 }
 
 func chooseProfile(profiles []arenaProfile, index, total int) arenaProfile {
@@ -94,6 +139,9 @@ func (p *arenaRetryPlayer) Play(ctx context.Context, board wordhunt.Board, deadl
 			break
 		}
 		delay := delays[attempt]
+		if strings.Contains(err.Error(), "429") || strings.Contains(err.Error(), "RESOURCE_EXHAUSTED") {
+			delay = 2 * time.Second
+		}
 		delay = delay/2 + time.Duration(rand.Int64N(int64(delay)+1))
 		if remaining := time.Until(deadline); delay >= remaining {
 			err = context.DeadlineExceeded

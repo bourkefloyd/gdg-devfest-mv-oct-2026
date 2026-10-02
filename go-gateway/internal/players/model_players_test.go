@@ -210,24 +210,22 @@ func TestGeminiPlayerFakeServer(t *testing.T) {
 	}
 }
 
-func TestGemmaInflightCap(t *testing.T) {
-	t.Setenv("ARENA_GEMMA_MAX_INFLIGHT", "1")
-	model := "gemma-inflight-test"
-	release, err := acquireGemma(context.Background(), model)
-	if err != nil {
-		t.Fatal(err)
+func TestGemmaRPMWindow(t *testing.T) {
+	gate := &requestWindow{}
+	now := time.Now()
+	if _, ok := gate.take(now, 2, time.Minute); !ok {
+		t.Fatal("first request should pass")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
-	defer cancel()
-	if _, err := acquireGemma(ctx, model); err == nil {
-		t.Fatal("second call should wait for the single slot")
+	if _, ok := gate.take(now, 2, time.Minute); !ok {
+		t.Fatal("second request should pass")
 	}
-	release()
-	release, err = acquireGemma(context.Background(), model)
-	if err != nil {
-		t.Fatal(err)
+	wait, ok := gate.take(now, 2, time.Minute)
+	if ok || wait < 30*time.Second {
+		t.Fatalf("third request should wait, ok=%v wait=%s", ok, wait)
 	}
-	release()
+	if _, ok := gate.take(now.Add(time.Minute), 2, time.Minute); !ok {
+		t.Fatal("request after the window should pass")
+	}
 }
 
 func TestHostedGemmaDisablesThinking(t *testing.T) {

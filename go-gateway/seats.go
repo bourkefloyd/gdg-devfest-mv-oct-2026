@@ -44,6 +44,7 @@ type wiring struct {
 	seats, agentSeats api.SeatFunc
 	commentator       players.Commentator
 	arenaClient       *genai.Client
+	arenaVertex       *genai.Client
 }
 
 // genaiBackends is the Gemini failover pair: Primary is Vertex when
@@ -102,6 +103,9 @@ func seatsFromEnv(log *slog.Logger, workers *pool.Pool) (w wiring) {
 	w.arenaClient = b.API
 	if w.arenaClient == nil {
 		w.arenaClient = b.Primary
+	}
+	if b.Primary != nil && b.Primary.ClientConfig().Backend == genai.BackendVertexAI {
+		w.arenaVertex = b.Primary
 	}
 	log.Info("players: real", "gemini_primary", backendName(b.Primary), "api_key_failover", apiFailover,
 		"gemma_pool", workers != nil, "gemini_model", env("GEMINI_PLAYER_MODEL", "default"))

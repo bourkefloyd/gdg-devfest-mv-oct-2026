@@ -162,7 +162,11 @@ function App() {
               <Play fill="currentColor" size={18} /> Load test
             </button>
           )}
+<<<<<<< HEAD
           <span className="cap-note">Gemini 3.8 Flash · Gemma 4 26B A4B · DiffusionGemma on this Mac when :8787 is up</span>
+=======
+          <span className="cap-note">50% Gemini 3.8 Flash · 50% Gemma 4 26B A4B</span>
+>>>>>>> 2d0096e (fix: serve Gemini and Gemma 26B with a per-minute cap)
         </div>
       </section>
 
