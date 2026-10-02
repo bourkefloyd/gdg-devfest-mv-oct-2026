@@ -236,6 +236,7 @@ gcloud run deploy "$SERVICE" \
   --max-instances=1 \
   --concurrency=1000 \
   --no-cpu-throttling \
+  --cpu-boost \
   --session-affinity \
   --allow-unauthenticated
 ```
