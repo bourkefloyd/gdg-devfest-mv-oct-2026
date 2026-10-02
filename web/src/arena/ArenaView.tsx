@@ -125,7 +125,7 @@ function App() {
               <Play fill="currentColor" size={18} /> Load test
             </button>
           )}
-          <span className="cap-note">10% Gemini agent · 30% baseline · 30% diffusion · 30% diffusion JEV</span>
+          <span className="cap-note">10% Gemini 3.8 Flash · 30% Gemma 4 26B A4B · 30% Gemma 4 31B diffusion (mock) · 30% Gemma 4 31B diffusion JEV (mock)</span>
         </div>
       </section>
 
@@ -282,7 +282,7 @@ function Results({ state, onClose, onRestart, onNewBoard }: { state: ArenaState;
 }
 
 function previewGame(index: number): ArenaGame {
-  return { id: `preview-${index}`, ordinal: index, board: PREVIEW_BOARD, name: `Agent ${String(index + 1).padStart(2, "0")}`, model: index < 3 ? "gemini-3.8-flash" : "gemma-4-26b-a4b-it", backend: "Google GenAI", profile: index < 3 ? "Gemini agent" : "Gemma profile", score: 0, perfectScore: 0, words: 0, retries: 0, elapsedMs: 0, currentWord: "", swipe: { path: [], word: "", updatedAt: 0 }, status: "queued" };
+  return { id: `preview-${index}`, ordinal: index, board: PREVIEW_BOARD, name: `Agent ${String(index + 1).padStart(2, "0")}`, model: index < 3 ? "gemini-3.8-flash" : "gemma-4-26b-a4b-it", backend: "Google GenAI", profile: index < 3 ? "Gemini 3.8 Flash" : "Gemma 4 26B A4B", score: 0, perfectScore: 0, words: 0, retries: 0, elapsedMs: 0, currentWord: "", swipe: { path: [], word: "", updatedAt: 0 }, status: "queued" };
 }
 function formatTimer(ms: number) {
   const seconds = Math.max(0, Math.floor(ms / 1000));
