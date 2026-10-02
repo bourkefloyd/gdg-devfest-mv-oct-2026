@@ -30,6 +30,7 @@ export interface ArenaGame {
   status: GameStatus;
   error?: string;
   profile?: string;
+  profileId?: string;
   retries: number;
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseArenaEvent } from "./api";
-import { arenaReducer, initialArenaState } from "./reducer";
+import { arenaReducer, initialArenaState, modelTone } from "./reducer";
 
 describe("arena gateway events", () => {
   it("hydrates boards, swipes, results, and final leaderboard", () => {
@@ -141,6 +141,43 @@ describe("arena gateway events", () => {
     });
     expect(state.status).toBe("finished");
     expect(state.games.map((game) => game.profile)).toEqual(["Gemma 4 26B A4B", "DiffusionGemma 26B (local)"]);
+    expect(modelTone(state.games[0])).toBe("gemma");
+    expect(modelTone(state.games[1])).toBe("diffusiongemma-local");
+  });
+
+  it("keeps diffusiongemma-local teal and preserves profile ids through later events", () => {
+    let state = arenaReducer(initialArenaState, { type: "start", count: 2 });
+    state = arenaReducer(state, {
+      type: "events",
+      batch: [
+        {
+          source: "cloud",
+          event: event({
+            type: "game_started",
+            game: { id: "g-flash", index: 0, profile: "Gemini 3.8 Flash", profile_id: "gemini", model: "gemini-3.8-flash", tiles: "ABCDEFGHIJKLMNOP" },
+          }),
+        },
+        {
+          source: "local",
+          event: event({
+            type: "game_started",
+            game: { id: "mac-1", index: 0, profile: "DiffusionGemma 26B (local)", profile_id: "diffusiongemma-local", model: "diffusiongemma-26b", tiles: "ABCDEFGHIJKLMNOP" },
+          }),
+        },
+      ],
+    });
+    state = arenaReducer(state, {
+      type: "event",
+      source: "local",
+      event: event({ type: "word", word_event: { game_id: "mac-1", word: "GEM", path: [0, 1, 2], points: 100, total: 100 } }),
+    });
+    const local = state.games.find((game) => game.id === "local:mac-1");
+    expect(state.games[0].profileId).toBe("gemini");
+    expect(local?.profileId).toBe("diffusiongemma-local");
+    expect(modelTone(state.games[0])).toBe("gemini");
+    expect(local && modelTone(local)).toBe("diffusiongemma-local");
+    expect(modelTone({ id: "cloud", name: "JEV", model: "gemma", profile: "Gemma Diffusion JEV", profileId: "gemma-diffusion-jev" })).toBe("gemma-diffusion-jev");
+    expect(modelTone({ id: "cloud", name: "Diffusion", model: "gemma-diffusion", profile: "Gemma Diffusion", profileId: "gemma-diffusion" })).toBe("gemma-diffusion");
   });
 
   it("finishes the cloud run when local diffusion is offline", () => {

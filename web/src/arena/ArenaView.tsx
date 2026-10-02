@@ -4,7 +4,7 @@ import {
 } from "lucide-react";
 import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { LOCAL_DIFFUSION_ORIGIN, cancelRun, connectRunEvents, createRun, probeLocalDiffusion } from "./api";
-import { arenaReducer, initialArenaState, isLocalSeat } from "./reducer";
+import { arenaReducer, initialArenaState, isLocalSeat, MODEL_TONE_COLOR, modelTone } from "./reducer";
 import type { ArenaGame, ArenaSource, ArenaState, NormalizedArenaEvent } from "./types";
 
 const SWIPE_COLORS = ["#ff5e73", "#5eead4", "#facc15", "#c084fc", "#60a5fa", "#fb923c", "#f472b6", "#a3e635"];
@@ -288,11 +288,12 @@ function Connection({ state, compact = false }: { state: ArenaState; compact?: b
 const GameBoard = memo(function GameBoard({ game, now, runStartedAt, preview }: { game: ArenaGame; now: number; runStartedAt?: number; preview: boolean }) {
   const board = game.board.length === 16 ? game.board : preview ? PREVIEW_BOARD : Array(16).fill("");
   const active = new Set(game.swipe.path);
-  const color = game.swipe.color ?? SWIPE_COLORS[game.ordinal % SWIPE_COLORS.length];
+  const tone = modelTone(game);
+  const color = game.swipe.color ?? (tone ? MODEL_TONE_COLOR[tone] : SWIPE_COLORS[game.ordinal % SWIPE_COLORS.length]);
   const elapsed = game.elapsedMs || (game.status === "running" && runStartedAt ? now - runStartedAt : 0);
   const pathPoints = game.swipe.path.map((index) => `${12.5 + (index % 4) * 25},${12.5 + Math.floor(index / 4) * 25}`).join(" ");
   return (
-    <article className={`game-card ${game.status} ${preview ? "preview" : ""}`}>
+    <article className={`game-card ${game.status} ${preview ? "preview" : ""} ${toneClass(tone)}`}>
       <div className="game-card-head">
         <div className="agent">
           <span className="agent-dot" style={{ background: color }} />
@@ -355,18 +356,26 @@ function Results({ state, onClose, onRestart, onNewBoard }: { state: ArenaState;
           <button className={tab === "all" ? "active" : ""} onClick={() => setTab("all")}>All <b>{eligible.length}</b></button>
         </div>
         <div className="profile-groups">
-          {groups.map((group) => <div key={group.name}><strong>{group.name}</strong><span>avg {Math.round(group.score / group.games).toLocaleString()} pts · {(group.words / group.games).toFixed(1)} words · {formatLatency(group.latency / group.games)} · {group.errors} errors</span></div>)}
+          {groups.map((group) => {
+            const sample = complete.find((game) => seatGroup(game) === group.name);
+            const tone = sample ? modelTone(sample) : modelTone({ id: "", name: group.name, model: "", profile: group.name });
+            return <div className={toneClass(tone)} key={group.name}><strong>{group.name}</strong><span>avg {Math.round(group.score / group.games).toLocaleString()} pts · {(group.words / group.games).toFixed(1)} words · {formatLatency(group.latency / group.games)} · {group.errors} errors</span></div>;
+          })}
           <div><strong>Incomplete seats</strong><span>{incomplete.length} excluded from profile averages</span></div>
         </div>
         <div className="leaderboard-head"><span>Rank / agent</span><span>Model / backend</span><span>Score / perfect</span><span>Words</span><span>Time</span></div>
         <div className="leaderboard">
-          {ranked.map((game, index) => (
-            <div className="leader-row" key={game.id}>
-              <div><b>{index + 1}</b><span className="agent-dot" style={{ background: SWIPE_COLORS[game.ordinal % SWIPE_COLORS.length] }} /><strong>{game.name}</strong></div>
+          {ranked.map((game, index) => {
+            const tone = modelTone(game);
+            const color = tone ? MODEL_TONE_COLOR[tone] : SWIPE_COLORS[game.ordinal % SWIPE_COLORS.length];
+            return (
+            <div className={`leader-row ${toneClass(tone)}`} key={game.id}>
+              <div><b>{index + 1}</b><span className="agent-dot" style={{ background: color }} /><strong>{game.name}</strong></div>
               <div><strong>{seatGroup(game)}</strong><small>{game.model} · {game.backend}</small></div>
               <strong>{game.score.toLocaleString()} / {game.perfectScore.toLocaleString()}</strong><span>{game.words}</span><span>{game.error ? "error" : formatLatency(game.timeToScoreMs ?? game.latencyMs ?? 0)} · {game.retries}r</span>
             </div>
-          ))}
+            );
+          })}
         </div>
         <div className="results-actions"><button onClick={onClose}>View boards</button><button onClick={onNewBoard}>New board</button><button className="play-button" onClick={onRestart}><RotateCcw size={17} /> Start over</button></div>
       </section>
@@ -388,6 +397,10 @@ function formatLatency(ms: number) {
 
 function isCompleteSeat(game: ArenaGame) {
   return game.status === "finished" && !game.error && game.backend !== "—" && game.model !== "Awaiting model";
+}
+
+function toneClass(tone: ReturnType<typeof modelTone>) {
+  return tone ? `tone-${tone}` : "";
 }
 
 function isSolverRow(game: ArenaGame) {
