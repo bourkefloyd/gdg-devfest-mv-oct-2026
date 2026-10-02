@@ -1,3 +1,69 @@
+# Word Rust
+
+**Placed top 4, Developer track, Google hackathon, Oct 1 2026, theme Build, Secure, and Scale.**
+
+Gemini 3.8 Flash and Gemma 4 26B play the same Word Hunt board on Cloud Run. The server checks every word against the dictionary and the tile path, then streams the live boards and leaderboard. An optional DiffusionGemma 26B seat runs on this Mac and never receives a connection from Cloud Run.
+
+**Live:** [wordrust-958584846348.us-central1.run.app](https://wordrust-958584846348.us-central1.run.app)
+
+**Stack:** Go gateway, React arena, Gemini API for Gemma 4 26B, Vertex AI for Gemini 3.8 Flash. Optional local seat: MLX 4-bit DiffusionGemma.
+
+**Google Cloud:** Cloud Run, Cloud Build, Artifact Registry, Secret Manager, IAM, Cloud Logging, Monitoring, Vertex AI.
+
+**Architecture:** [hack/architecture.md](hack/architecture.md) and [hack/architecture.png](hack/architecture.png).
+
+Live revision `wordrust-00009-6fb`, image `6caccf0` (includes #26, same board for the local seats). `ARENA_GEMINI_MAX_TURNS=1`.
+
+### Numbers to have ready
+
+`docs/judge-prep.md` was not in the local project store. These are the recorded runs.
+
+| Run | Result |
+| --- | --- |
+| k6 public smoke | p50 72.3 ms, p95 1048.6 ms, 0.60% HTTP fails (one SSE timeout) |
+| N=24 `e0d74cec94546d50` | Gemini 15,200 and 0 errors. Hosted Gemma seats scored 0 with deadline errors, before minimal thinking |
+| N=100 `f10cc60dcd37dfb6` | `gemma-4-31b-it` mocks 60/60 `429`. Gemma 26B 13/30 `429`. Gemini 10/10 completed |
+| 8-seat on `wordrust-00008-8kr` | One turn each. Gemini 2400, 2100, 2000, 2000. Gemma 26B 1200, 800, 500, 400. 0 errors, 0 retries |
+| 8-seat on `wordrust-00009-6fb` | Run `eb4eb0bc83121539`. Gemini 12800, 10600, 10600, 8800. Gemma 26B 3300, 3300, 2900, 2900. 0 errors, 0 retries |
+
+### Screenshots
+
+The store files `final-leaderboard.png`, `final-arena-live.png`, and `final-arena-boards.png` were not on this Mac. These are the arena captures that were.
+
+![Same board, cloud seats and local DiffusionGemma, with the leaderboard](hack/media/arena-same-board.png)
+
+*Running arena. Cloud Gemini and Gemma seats share the board with local DiffusionGemma. Leaderboard on the right.*
+
+![Arena grid ready for 100 games](hack/media/arena-grid.png)
+
+*Idle grid, 100 boards, before a run starts.*
+
+![Four live boards and the leaderboard](hack/media/arena-swipes.png)
+
+*Four-game run. Swipes on the boards, leaderboard on the right.*
+
+## Run locally
+
+Prerequisites on the hack machine: Go 1.27.1 (`go-gateway/go.mod`), Node v24.14.0, npm 11.9.0. gcloud 586.0.0 is optional and only used to deploy. Put a Gemini API key in `.env`, copied from `.env.example`. `.env` is gitignored and is never committed.
+
+```bash
+make setup
+make dev
+```
+
+`make setup` downloads Go modules and npm packages, and creates `.env` from `.env.example` when it is missing. `make dev` starts the gateway on `127.0.0.1:8080` and the Vite app on `:4317`.
+
+Optional, Apple Silicon only. This is not required. Without it the page shows local diffusion as offline.
+
+```bash
+make setup-local-model
+make local-model
+```
+
+`make setup-local-model` creates `local-model/.venv` and installs `mlx-optiq` ≥ 0.3.2. `make local-model` serves `mlx-community/diffusiongemma-26B-A4B-it-4bit` on `127.0.0.1:8787`. First start downloads about 15 GB and the process needs 16 GB or more of unified memory. The browser calls that address directly. Cloud Run does not.
+
+---
+
 # Gemma 4 Production Architecture: Go API Gateway + Rust gRPC Inference Worker
 
 [![Rust](https://img.shields.io/badge/Language-Rust%202021-orange.svg)](https://www.rust-lang.org/)
