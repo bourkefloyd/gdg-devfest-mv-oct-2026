@@ -157,7 +157,12 @@ button:disabled { cursor: not-allowed; opacity: .55; }
 .stat > small { margin-left: 7px; color: #5d6961; font-size: 8px; }
 
 .arena-shell { padding: 11px 12px 24px; }
-.arena-heading { height: 39px; display: flex; align-items: flex-start; justify-content: space-between; padding: 0 5px; }
+.arena-heading { min-height: 39px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 5px; }
+.arena-status { display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.local-diffusion { display: flex; align-items: center; gap: 5px; max-width: 280px; color: #8fd0ff; font: 500 8px/1.2 "DM Mono", monospace; text-transform: uppercase; letter-spacing: .08em; }
+.local-diffusion.offline { color: #9a917f; }
+.local-diffusion.checking { color: #f2ce70; }
+.local-diffusion .local-dot { flex: 0 0 auto; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .arena-heading h2 { display: inline; margin: 0; font-size: 12px; letter-spacing: -.01em; }
 .arena-heading > div > span { margin-left: 8px; color: #657169; font: 400 8px "DM Mono", monospace; }
 .connection { display: flex; align-items: center; gap: 5px; color: #68736c; font: 500 8px/1 "DM Mono", monospace; text-transform: uppercase; letter-spacing: .08em; }

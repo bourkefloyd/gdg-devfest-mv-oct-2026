@@ -81,6 +81,80 @@ describe("arena gateway events", () => {
     expect(state.status).toBe("finished");
     expect(state.stats).toMatchObject({ running: 0, p50LatencyMs: 240 });
   });
+
+  it("keeps local DiffusionGemma seats in their own group", () => {
+    let state = arenaReducer(initialArenaState, { type: "start", count: 1 });
+    state = arenaReducer(state, { type: "local-gateway", status: "live", runId: "local-run" });
+    state = arenaReducer(state, {
+      type: "event",
+      source: "cloud",
+      event: event({
+        type: "game_started",
+        game: { id: "cloud-1", index: 0, tiles: "ABCDEFGHIJKLMNOP", player_name: "Turbo Otter 01", profile: "Gemma 4 26B A4B" },
+      }),
+    });
+    state = arenaReducer(state, {
+      type: "event",
+      source: "local",
+      event: event({
+        type: "game_started",
+        game: { id: "local-1", index: 0, tiles: "ABCDEFGHIJKLMNOP", profile: "DiffusionGemma 26B (local)" },
+      }),
+    });
+
+    expect(state.games).toHaveLength(2);
+    expect(state.games[0]).toMatchObject({ id: "cloud-1", name: "Turbo Otter 01", profile: "Gemma 4 26B A4B" });
+    expect(state.games[1]).toMatchObject({
+      id: "local:local-1",
+      name: "DiffusionGemma 26B (local)",
+      profile: "DiffusionGemma 26B (local)",
+      status: "running",
+    });
+    expect(state.localLabel).toBe("DiffusionGemma 26B (local)");
+
+    state = arenaReducer(state, {
+      type: "event",
+      source: "local",
+      event: event({
+        type: "word",
+        word_event: { game_id: "local-1", word: "GEM", path: [0, 1, 2], points: 100, total: 100 },
+      }),
+    });
+    expect(state.games[0].score).toBe(0);
+    expect(state.games[1]).toMatchObject({ score: 100, words: 1, profile: "DiffusionGemma 26B (local)" });
+
+    state = arenaReducer(state, {
+      type: "event",
+      source: "cloud",
+      event: event({ type: "run_finished", stats: { running: 0, p50_latency_ms: 10 }, leaderboard: [] }),
+    });
+    expect(state.status).toBe("running");
+    expect(state.games[1].status).toBe("running");
+
+    state = arenaReducer(state, {
+      type: "event",
+      source: "local",
+      event: event({
+        type: "run_finished",
+        leaderboard: [{ game_id: "local-1", profile: "DiffusionGemma 26B (local)", score: 100, word_count: 1 }],
+      }),
+    });
+    expect(state.status).toBe("finished");
+    expect(state.games.map((game) => game.profile)).toEqual(["Gemma 4 26B A4B", "DiffusionGemma 26B (local)"]);
+  });
+
+  it("finishes the cloud run when local diffusion is offline", () => {
+    let state = arenaReducer(initialArenaState, { type: "start", count: 1 });
+    state = arenaReducer(state, { type: "local-gateway", status: "checking" });
+    state = arenaReducer(state, {
+      type: "event",
+      event: event({ type: "run_finished", stats: { running: 0, p50_latency_ms: 12 }, leaderboard: [] }),
+    });
+    expect(state.status).toBe("running");
+    state = arenaReducer(state, { type: "local-gateway", status: "offline" });
+    expect(state.status).toBe("finished");
+    expect(state.message).toBeUndefined();
+  });
 });
 
 function event(value: Record<string, unknown>) {

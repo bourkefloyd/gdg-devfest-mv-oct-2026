@@ -1,6 +1,8 @@
 export type ConnectionState = "idle" | "connecting" | "live" | "reconnecting" | "closed" | "error";
 export type RunStatus = "idle" | "starting" | "running" | "cancelling" | "finished" | "error";
 export type GameStatus = "queued" | "running" | "finished" | "error";
+export type LocalGatewayStatus = "unknown" | "checking" | "offline" | "live" | "finished";
+export type ArenaSource = "cloud" | "local";
 
 export interface SwipeState {
   path: number[];
@@ -42,6 +44,10 @@ export interface ArenaStats {
 
 export interface ArenaState {
   runId?: string;
+  localRunId?: string;
+  localGateway: LocalGatewayStatus;
+  localLabel?: string;
+  cloudSettled: boolean;
   requestedCount: number;
   status: RunStatus;
   connection: ConnectionState;
