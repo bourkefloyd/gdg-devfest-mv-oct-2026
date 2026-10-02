@@ -1,15 +1,18 @@
-import type { ArenaGame, ArenaState, ConnectionState, NormalizedArenaEvent } from "./types";
+import type { ArenaGame, ArenaSource, ArenaState, ConnectionState, LocalGatewayStatus, NormalizedArenaEvent } from "./types";
 
 export type ArenaAction =
   | { type: "start"; count: number }
   | { type: "created"; runId: string }
+  | { type: "local-gateway"; status: LocalGatewayStatus; runId?: string }
   | { type: "connection"; connection: ConnectionState }
-  | { type: "event"; event: NormalizedArenaEvent }
+  | { type: "event"; event: NormalizedArenaEvent; source?: ArenaSource }
   | { type: "cancelling" }
   | { type: "failure"; message: string }
   | { type: "reset" };
 
 export const initialArenaState: ArenaState = {
+  localGateway: "unknown",
+  cloudSettled: false,
   requestedCount: 24,
   status: "idle",
   connection: "idle",
@@ -30,6 +33,8 @@ export function arenaReducer(state: ArenaState, action: ArenaAction): ArenaState
       };
     case "created":
       return { ...state, runId: action.runId, status: "running", connection: "connecting" };
+    case "local-gateway":
+      return applyLocalGateway(state, action.status, action.runId);
     case "connection":
       return { ...state, connection: action.connection };
     case "cancelling":
@@ -39,38 +44,41 @@ export function arenaReducer(state: ArenaState, action: ArenaAction): ArenaState
     case "reset":
       return { ...initialArenaState, requestedCount: state.requestedCount };
     case "event":
-      return reduceServerEvent(state, action.event);
+      return reduceServerEvent(state, action.event, action.source ?? "cloud");
   }
 }
 
-function reduceServerEvent(state: ArenaState, event: NormalizedArenaEvent): ArenaState {
+function applyLocalGateway(state: ArenaState, status: LocalGatewayStatus, runId?: string): ArenaState {
+  const next: ArenaState = { ...state, localGateway: status, localRunId: runId ?? state.localRunId };
+  if ((status === "offline" || status === "finished") && state.cloudSettled && state.status === "running") {
+    return finishArena(next);
+  }
+  return next;
+}
+
+function reduceServerEvent(state: ArenaState, event: NormalizedArenaEvent, source: ArenaSource): ArenaState {
   const { type, payload } = event;
   if (["run_started", "started"].includes(type)) {
     return { ...state, status: "running", message: undefined, startedAt: state.startedAt ?? Date.now() };
   }
-  if (["snapshot", "state"].includes(type)) return applySnapshot(state, payload);
-  if (["stats", "metrics", "run_stats"].includes(type)) return { ...state, stats: statsFrom(payload, state.stats) };
+  if (["snapshot", "state"].includes(type)) return applySnapshot(state, payload, source);
+  if (["stats", "metrics", "run_stats"].includes(type)) {
+    if (localSeatOpen(state)) return { ...state, stats: deriveStats(state.games, state) };
+    return { ...state, stats: statsFrom(payload, state.stats) };
+  }
   if (["run_finished", "run_cancelled", "run_complete", "complete", "finished"].includes(type)) {
-    const snap = applySnapshot(state, payload);
-    return {
-      ...snap,
-      status: "finished",
-      connection: "closed",
-      finishedAt: Date.now(),
-      games: snap.games.map((game) => game.status === "error" ? game : { ...game, status: "finished" }),
-      stats: { ...snap.stats, running: 0 },
-    };
+    return finishSource(state, payload, source);
   }
   if (type === "error" && !gameIdentifier(payload)) {
     return { ...state, stats: { ...state.stats, errors: state.stats.errors + 1 }, message: text(payload.error) ?? text(payload.message) ?? "Arena stream reported an error" };
   }
 
   if (["game_started", "game_start", "game_created"].includes(type)) {
-    return updateGame(state, payload, (game) => ({ ...hydrateGame(game, payload), status: "running" }));
+    return updateGame(state, payload, source, (game) => ({ ...hydrateGame(game, payload, source), status: "running" }));
   }
   if (["swipe", "game_swipe", "path", "path_updated"].includes(type)) {
-    return updateGame(state, payload, (game) => ({
-      ...hydrateGame(game, payload),
+    return updateGame(state, payload, source, (game) => ({
+      ...hydrateGame(game, payload, source),
       status: game.status === "queued" ? "running" : game.status,
       currentWord: text(payload.word) ?? text(payload.current_word) ?? game.currentWord,
       swipe: {
@@ -82,10 +90,10 @@ function reduceServerEvent(state: ArenaState, event: NormalizedArenaEvent): Aren
     }));
   }
   if (["word", "word_found", "word_accepted", "score"].includes(type)) {
-    return updateGame(state, payload, (game) => {
+    return updateGame(state, payload, source, (game) => {
       const word = text(payload.word) ?? game.currentWord;
       return {
-        ...hydrateGame(game, payload),
+        ...hydrateGame(game, payload, source),
         status: game.status === "queued" ? "running" : game.status,
         words: number(payload.words ?? payload.word_count ?? payload.total_words) ?? game.words + (payload.accepted === false ? 0 : 1),
         score: number(payload.score ?? payload.total_score ?? payload.total) ?? game.score + (number(payload.points) ?? 0),
@@ -100,70 +108,111 @@ function reduceServerEvent(state: ArenaState, event: NormalizedArenaEvent): Aren
     });
   }
   if (["game_updated", "game_update", "progress"].includes(type)) {
-    return updateGame(state, payload, (game) => hydrateGame(game, payload));
+    return updateGame(state, payload, source, (game) => hydrateGame(game, payload, source));
   }
   if (["game_finished", "game_complete", "game_result"].includes(type)) {
-    return updateGame(state, payload, (game) => {
-      const hydrated = hydrateGame(game, payload);
+    return updateGame(state, payload, source, (game) => {
+      const hydrated = hydrateGame(game, payload, source);
       return { ...hydrated, status: hydrated.error ? "error" : "finished", currentWord: "" };
     });
   }
   if (["game_error", "failed"].includes(type)) {
-    const next = updateGame(state, payload, (game) => ({ ...hydrateGame(game, payload), status: "error", error: text(payload.error) ?? text(payload.message) ?? "Game failed" }));
+    const next = updateGame(state, payload, source, (game) => ({ ...hydrateGame(game, payload, source), status: "error", error: text(payload.error) ?? text(payload.message) ?? "Game failed" }));
     return { ...next, stats: { ...next.stats, errors: next.stats.errors + 1 } };
   }
-  return payload.games || payload.stats ? applySnapshot(state, payload) : state;
+  return payload.games || payload.stats ? applySnapshot(state, payload, source) : state;
 }
 
-function applySnapshot(state: ArenaState, payload: Record<string, unknown>): ArenaState {
+function finishSource(state: ArenaState, payload: Record<string, unknown>, source: ArenaSource): ArenaState {
+  const snap = applySnapshot(state, payload, source);
+  const games = snap.games.map((game) => {
+    if (isLocalSeat(game) !== (source === "local")) return game;
+    return game.status === "error" ? game : { ...game, status: "finished" as const };
+  });
+  const cloudSettled = source === "cloud" || state.cloudSettled;
+  const localGateway = source === "local" ? "finished" as const : state.localGateway;
+  const localDone = localGateway === "offline" || localGateway === "finished" || localGateway === "unknown";
+  const next: ArenaState = { ...snap, games, cloudSettled, localGateway, stats: deriveStats(games, snap) };
+  if (cloudSettled && localDone && !localSeatOpen(state)) {
+    return { ...finishArena(next), stats: { ...snap.stats, running: 0 } };
+  }
+  if (cloudSettled && localDone) return finishArena(next);
+  return { ...next, status: state.status === "cancelling" ? "cancelling" : "running" };
+}
+
+function finishArena(state: ArenaState): ArenaState {
+  return {
+    ...state,
+    status: "finished",
+    connection: "closed",
+    finishedAt: Date.now(),
+    stats: { ...deriveStats(state.games, state), running: 0 },
+  };
+}
+
+function localSeatOpen(state: ArenaState) {
+  return state.localGateway === "checking" || state.localGateway === "live" || state.localGateway === "finished";
+}
+
+function applySnapshot(state: ArenaState, payload: Record<string, unknown>, source: ArenaSource = "cloud"): ArenaState {
   const incoming = Array.isArray(payload.games) ? payload.games : Array.isArray(payload.results) ? payload.results : undefined;
   let games = state.games;
   if (incoming) {
     games = [...state.games];
     incoming.forEach((value, index) => {
       if (!isRecord(value)) return;
-      const slot = locateGame(games, value, index);
+      const slot = locateGame(games, value, source, index);
       const base = slot >= 0 ? games[slot] : queuedGame(games.length);
-      const next = hydrateGame(base, value);
+      const next = hydrateGame(base, value, source, index);
       if (slot >= 0) games[slot] = next;
       else games.push(next);
     });
   }
   const statsPayload = isRecord(payload.stats) ? payload.stats : payload;
-  return { ...state, games, stats: statsFrom(statsPayload, deriveStats(games, state)) };
+  const labeled = rememberLocalLabel({ ...state, games }, source);
+  return { ...labeled, stats: statsFrom(statsPayload, deriveStats(games, state)) };
 }
 
-function updateGame(state: ArenaState, payload: Record<string, unknown>, update: (game: ArenaGame) => ArenaGame): ArenaState {
+function updateGame(state: ArenaState, payload: Record<string, unknown>, source: ArenaSource, update: (game: ArenaGame) => ArenaGame): ArenaState {
   const games = [...state.games];
-  let index = locateGame(games, payload);
+  let index = locateGame(games, payload, source);
   if (index < 0) {
     index = games.length;
     games.push(queuedGame(index));
   }
   games[index] = update(games[index]);
-  return { ...state, games, stats: deriveStats(games, state) };
+  const labeled = rememberLocalLabel({ ...state, games }, source);
+  return { ...labeled, stats: deriveStats(games, state) };
 }
 
-function locateGame(games: ArenaGame[], payload: Record<string, unknown>, fallback?: number): number {
+function locateGame(games: ArenaGame[], payload: Record<string, unknown>, source: ArenaSource = "cloud", fallback?: number): number {
+  if (source === "local") {
+    const id = localSeatId(payload, fallback);
+    if (!id) return -1;
+    return games.findIndex((game) => game.id === id);
+  }
   const id = gameIdentifier(payload);
   if (id) {
     const match = games.findIndex((game) => game.id === id);
     if (match >= 0) return match;
   }
   const ordinal = number(payload.index ?? payload.ordinal ?? payload.game_index);
-  if (ordinal !== undefined && games[ordinal]) return ordinal;
-  return fallback !== undefined && games[fallback] ? fallback : -1;
+  if (ordinal !== undefined && games[ordinal] && !isLocalSeat(games[ordinal])) return ordinal;
+  return fallback !== undefined && games[fallback] && !isLocalSeat(games[fallback]) ? fallback : -1;
 }
 
-function hydrateGame(game: ArenaGame, payload: Record<string, unknown>): ArenaGame {
+function hydrateGame(game: ArenaGame, payload: Record<string, unknown>, source: ArenaSource = "cloud", fallback?: number): ArenaGame {
   const board = boardFrom(payload.board ?? payload.tiles ?? payload.letters);
   const status = text(payload.status);
+  const payloadName = text(payload.name ?? payload.player_name ?? payload.agent);
+  const payloadProfile = text(payload.profile);
+  const localLabel = payloadProfile ?? payloadName;
   return {
     ...game,
-    id: gameIdentifier(payload) ?? game.id,
+    id: (source === "local" ? localSeatId(payload, fallback) : gameIdentifier(payload)) ?? game.id,
     ordinal: number(payload.index ?? payload.ordinal ?? payload.game_index) ?? game.ordinal,
     board: board ?? game.board,
-    name: text(payload.name ?? payload.player_name ?? payload.agent) ?? game.name,
+    name: source === "local" ? (localLabel ?? game.name) : (payloadName ?? game.name),
     model: text(payload.model ?? payload.model_name) ?? game.model,
     backend: text(payload.backend ?? payload.provider) ?? game.backend,
     score: number(payload.score ?? payload.total_score) ?? game.score,
@@ -171,7 +220,7 @@ function hydrateGame(game: ArenaGame, payload: Record<string, unknown>): ArenaGa
     latencyMs: number(payload.latency_ms ?? payload.latency ?? payload.duration_ms) ?? game.latencyMs,
     timeToScoreMs: number(payload.time_to_score_ms) ?? game.timeToScoreMs,
     perfectScore: number(payload.perfect_score) ?? game.perfectScore,
-    profile: text(payload.profile) ?? game.profile,
+    profile: source === "local" ? (localLabel ?? game.profile) : (payloadProfile ?? game.profile),
     retries: number(payload.retries) ?? game.retries,
     error: text(payload.error) ?? game.error,
     elapsedMs: number(payload.elapsed_ms ?? payload.elapsed) ?? game.elapsedMs,
@@ -179,6 +228,23 @@ function hydrateGame(game: ArenaGame, payload: Record<string, unknown>): ArenaGa
     currentWord: text(payload.current_word ?? payload.word) ?? game.currentWord,
     status: status === "finished" || status === "complete" ? "finished" : status === "error" || status === "failed" ? "error" : status === "running" ? "running" : game.status,
   };
+}
+
+function rememberLocalLabel(state: ArenaState, source: ArenaSource): ArenaState {
+  if (source !== "local" || state.localLabel) return state;
+  const label = state.games.find((game) => isLocalSeat(game) && game.profile)?.profile;
+  return label ? { ...state, localLabel: label } : state;
+}
+
+export function isLocalSeat(game: ArenaGame) {
+  return game.id.startsWith("local:") || game.id.startsWith("local-index:");
+}
+
+function localSeatId(payload: Record<string, unknown>, fallback?: number): string | undefined {
+  const id = gameIdentifier(payload);
+  if (id) return `local:${id}`;
+  const ordinal = number(payload.index ?? payload.ordinal ?? payload.game_index) ?? fallback;
+  return ordinal === undefined ? undefined : `local-index:${ordinal}`;
 }
 
 function statsFrom(payload: Record<string, unknown>, fallback: ArenaState["stats"]): ArenaState["stats"] {

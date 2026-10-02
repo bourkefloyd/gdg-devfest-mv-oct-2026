@@ -1,6 +1,33 @@
 import type { NormalizedArenaEvent, RawArenaEvent, RunCreatedResponse } from "./types";
 
 const API_BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
+export const LOCAL_DIFFUSION_ORIGIN = "http://127.0.0.1:8787";
+export const LOCAL_HEALTH_TIMEOUT_MS = 1200;
+
+function arenaURL(origin: string, path: string) {
+  return `${origin.replace(/\/$/, "")}${path}`;
+}
+
+export async function probeLocalDiffusion(signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), LOCAL_HEALTH_TIMEOUT_MS);
+  const abort = () => controller.abort();
+  signal?.addEventListener("abort", abort, { once: true });
+  try {
+    const response = await fetch(arenaURL(LOCAL_DIFFUSION_ORIGIN, "/api/health"), {
+      method: "GET",
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    return response.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abort);
+  }
+}
 const EVENT_NAMES = [
   "run_started", "run-started", "game_started", "game-started", "swipe", "word",
   "word_found", "word-found", "game_updated", "game-updated", "game_finished",
@@ -13,8 +40,9 @@ export async function createRun(
   durationSeconds: 10 | 30,
   seed?: number,
   signal?: AbortSignal,
+  origin = API_BASE,
 ): Promise<RunCreatedResponse> {
-  const response = await fetch(`${API_BASE}/api/arena/runs`, {
+  const response = await fetch(arenaURL(origin, "/api/arena/runs"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ count, player_mix: playerMix, duration_s: durationSeconds, ...(seed === undefined ? {} : { seed }) }),
@@ -33,8 +61,8 @@ export async function createRun(
   };
 }
 
-export async function cancelRun(runId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/api/arena/runs/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+export async function cancelRun(runId: string, origin = API_BASE): Promise<void> {
+  const response = await fetch(arenaURL(origin, `/api/arena/runs/${encodeURIComponent(runId)}/cancel`), { method: "POST" });
   if (!response.ok) throw new Error(await apiError(response, "Unable to cancel run"));
 }
 
@@ -43,8 +71,9 @@ export function connectRunEvents(
   onEvent: (event: NormalizedArenaEvent) => void,
   onOpen: () => void,
   onDisconnect: () => void,
+  origin = API_BASE,
 ): () => void {
-  const source = new EventSource(`${API_BASE}/api/arena/runs/${encodeURIComponent(runId)}/events`);
+  const source = new EventSource(arenaURL(origin, `/api/arena/runs/${encodeURIComponent(runId)}/events`));
   source.onopen = onOpen;
   source.onerror = onDisconnect;
   const consume = (message: MessageEvent<string>) => {

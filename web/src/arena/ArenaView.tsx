@@ -3,8 +3,8 @@ import {
   Sparkles, Trophy, Wifi, WifiOff, X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import { cancelRun, connectRunEvents, createRun } from "./api";
-import { arenaReducer, initialArenaState } from "./reducer";
+import { LOCAL_DIFFUSION_ORIGIN, cancelRun, connectRunEvents, createRun, probeLocalDiffusion } from "./api";
+import { arenaReducer, initialArenaState, isLocalSeat } from "./reducer";
 import type { ArenaGame, ArenaState } from "./types";
 
 const SWIPE_COLORS = ["#ff5e73", "#5eead4", "#facc15", "#c084fc", "#60a5fa", "#fb923c", "#f472b6", "#a3e635"];
@@ -41,23 +41,56 @@ function App() {
     closeStream.current();
     const controller = new AbortController();
     request.current = controller;
+    const stops: { cloud: () => void; local: () => void } = { cloud: () => undefined, local: () => undefined };
+    closeStream.current = () => {
+      stops.cloud();
+      stops.local();
+    };
     const safeCount = Math.max(1, Math.min(100, Math.round(count || 1)));
     const requestedSeed = freshBoard ? undefined : parseSeed(seedInput);
     if (freshBoard) setSeedInput("");
     setCount(safeCount);
     dispatch({ type: "start", count: safeCount });
+    dispatch({ type: "local-gateway", status: "checking" });
+    const localProbe = probeLocalDiffusion(controller.signal);
     try {
       const result = await createRun(safeCount, "mixed", duration, requestedSeed, controller.signal);
       if (controller.signal.aborted) return;
       setRunSeed(result.seed);
       setSharedTiles(result.tiles);
       dispatch({ type: "created", runId: result.run_id });
-      closeStream.current = connectRunEvents(
+      stops.cloud = connectRunEvents(
         result.run_id,
-        (event) => dispatch({ type: "event", event }),
+        (event) => dispatch({ type: "event", event, source: "cloud" }),
         () => dispatch({ type: "connection", connection: "live" }),
         () => dispatch({ type: "connection", connection: "reconnecting" }),
       );
+      const localUp = await localProbe;
+      if (controller.signal.aborted) return;
+      if (!localUp) {
+        dispatch({ type: "local-gateway", status: "offline" });
+        return;
+      }
+      try {
+        const local = await createRun(safeCount, "mixed", duration, requestedSeed ?? result.seed, controller.signal, LOCAL_DIFFUSION_ORIGIN);
+        if (controller.signal.aborted) return;
+        dispatch({ type: "local-gateway", status: "live", runId: local.run_id });
+        let opened = false;
+        let cancelled = false;
+        const stopLocal = connectRunEvents(
+          local.run_id,
+          (event) => dispatch({ type: "event", event, source: "local" }),
+          () => { opened = true; },
+          () => { if (!cancelled && !opened) dispatch({ type: "local-gateway", status: "offline" }); },
+          LOCAL_DIFFUSION_ORIGIN,
+        );
+        stops.local = () => {
+          cancelled = true;
+          stopLocal();
+        };
+      } catch {
+        if (!controller.signal.aborted) dispatch({ type: "local-gateway", status: "offline" });
+      }
     } catch (error) {
       if (!controller.signal.aborted) dispatch({ type: "failure", message: error instanceof Error ? error.message : "Unable to start arena" });
     }
@@ -70,14 +103,18 @@ function App() {
   }, [startRun]);
 
   const stopRun = useCallback(async () => {
-    if (!state.runId) return;
+    if (!state.runId && !state.localRunId) return;
     dispatch({ type: "cancelling" });
-    try {
-      await cancelRun(state.runId);
-    } catch (error) {
-      dispatch({ type: "failure", message: error instanceof Error ? error.message : "Unable to cancel run" });
+    const tasks: Array<Promise<void>> = [];
+    if (state.runId) tasks.push(cancelRun(state.runId));
+    if (state.localRunId) tasks.push(cancelRun(state.localRunId, LOCAL_DIFFUSION_ORIGIN));
+    const results = await Promise.allSettled(tasks);
+    const cloudFailed = state.runId ? results[0]?.status === "rejected" : false;
+    if (cloudFailed) {
+      const reason = results[0]?.status === "rejected" ? results[0].reason : undefined;
+      dispatch({ type: "failure", message: reason instanceof Error ? reason.message : "Unable to cancel run" });
     }
-  }, [state.runId]);
+  }, [state.localRunId, state.runId]);
 
   const busy = state.status === "starting" || state.status === "running" || state.status === "cancelling";
   const previewGames = useMemo(() => Array.from({ length: count }, (_, index) => previewGame(index)), [count]);
@@ -125,7 +162,7 @@ function App() {
               <Play fill="currentColor" size={18} /> Load test
             </button>
           )}
-          <span className="cap-note">10% Gemini 3.8 Flash · 30% Gemma 4 26B A4B · 30% Gemma 4 31B diffusion (mock) · 30% Gemma 4 31B diffusion JEV (mock)</span>
+          <span className="cap-note">Gemini 3.8 Flash · Gemma 4 26B A4B · DiffusionGemma on this Mac when :8787 is up</span>
         </div>
       </section>
 
@@ -135,9 +172,12 @@ function App() {
         <div className="arena-heading">
           <div>
             <h2>{state.status === "idle" ? "Arena preview" : `Run ${state.runId?.slice(0, 8) ?? "starting"}`}</h2>
-            <span>{state.status === "idle" ? `${count} boards ready to deploy` : `${state.games.length} of ${state.requestedCount} boards provisioned`}</span>
+            <span>{state.status === "idle" ? `${count} boards ready to deploy` : boardSummary(state)}</span>
           </div>
-          <Connection state={state} />
+          <div className="arena-status">
+            <LocalDiffusion state={state} />
+            <Connection state={state} />
+          </div>
         </div>
 
         {state.message && (
@@ -179,6 +219,35 @@ function Stats({ state }: { state: ArenaState }) {
       ))}
     </section>
   );
+}
+
+function LocalDiffusion({ state }: { state: ArenaState }) {
+  if (state.status === "idle" || state.localGateway === "unknown") return null;
+  const offline = state.localGateway === "offline";
+  const checking = state.localGateway === "checking";
+  const label = offline
+    ? "Local diffusion is offline"
+    : checking
+      ? "Checking local diffusion"
+      : state.localLabel ?? "DiffusionGemma";
+  return (
+    <div className={`local-diffusion ${offline ? "offline" : checking ? "checking" : "live"}`}>
+      <span className="local-dot" />
+      <span>{label}</span>
+    </div>
+  );
+}
+
+function boardSummary(state: ArenaState) {
+  if (state.localGateway === "live" || state.localGateway === "finished") {
+    return `${state.games.length} boards · ${state.localLabel ?? "DiffusionGemma"} is its own group`;
+  }
+  return `${state.games.length} of ${state.requestedCount} boards provisioned`;
+}
+
+function seatGroup(game: ArenaGame) {
+  if (isLocalSeat(game)) return game.profile ?? game.name;
+  return game.profile ?? "Unknown profile";
 }
 
 function Connection({ state, compact = false }: { state: ArenaState; compact?: boolean }) {
@@ -243,7 +312,7 @@ function Results({ state, onClose, onRestart, onNewBoard }: { state: ArenaState;
   const ranked = [...(tab === "complete" ? complete : tab === "incomplete" ? incomplete : eligible)]
     .sort((a, b) => b.score - a.score || (a.timeToScoreMs ?? Infinity) - (b.timeToScoreMs ?? Infinity));
   const groups = Object.values(complete.reduce<Record<string, { name: string; games: number; score: number; words: number; latency: number; errors: number }>>((all, game) => {
-    const name = game.profile ?? "Unknown profile";
+    const name = seatGroup(game);
     const group = all[name] ??= { name, games: 0, score: 0, words: 0, latency: 0, errors: 0 };
     group.games++; group.score += game.score; group.words += game.words; group.latency += game.latencyMs ?? 0; group.errors += game.error ? 1 : 0;
     return all;
@@ -270,7 +339,7 @@ function Results({ state, onClose, onRestart, onNewBoard }: { state: ArenaState;
           {ranked.map((game, index) => (
             <div className="leader-row" key={game.id}>
               <div><b>{index + 1}</b><span className="agent-dot" style={{ background: SWIPE_COLORS[game.ordinal % SWIPE_COLORS.length] }} /><strong>{game.name}</strong></div>
-              <div><strong>{game.profile ?? game.model}</strong><small>{game.model} · {game.backend}</small></div>
+              <div><strong>{seatGroup(game)}</strong><small>{game.model} · {game.backend}</small></div>
               <strong>{game.score.toLocaleString()} / {game.perfectScore.toLocaleString()}</strong><span>{game.words}</span><span>{game.error ? "error" : formatLatency(game.timeToScoreMs ?? game.latencyMs ?? 0)} · {game.retries}r</span>
             </div>
           ))}
