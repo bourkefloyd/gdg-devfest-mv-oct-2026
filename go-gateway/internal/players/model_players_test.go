@@ -210,6 +210,26 @@ func TestGeminiPlayerFakeServer(t *testing.T) {
 	}
 }
 
+func TestGemmaInflightCap(t *testing.T) {
+	t.Setenv("ARENA_GEMMA_MAX_INFLIGHT", "1")
+	model := "gemma-inflight-test"
+	release, err := acquireGemma(context.Background(), model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
+	defer cancel()
+	if _, err := acquireGemma(ctx, model); err == nil {
+		t.Fatal("second call should wait for the single slot")
+	}
+	release()
+	release, err = acquireGemma(context.Background(), model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+}
+
 func TestHostedGemmaDisablesThinking(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)

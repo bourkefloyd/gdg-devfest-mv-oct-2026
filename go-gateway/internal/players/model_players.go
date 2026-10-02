@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"go-gateway/internal/wordhunt"
@@ -263,6 +264,11 @@ func (p *HostedGemmaPlayer) Play(ctx context.Context, b wordhunt.Board, deadline
 	if p.Client == nil {
 		return Result{}, errors.New("nil hosted Gemma client")
 	}
+	release, err := acquireGemma(ctx, p.Model)
+	if err != nil {
+		return Result{}, err
+	}
+	defer release()
 	ctx, cancel := moveContext(ctx, deadline)
 	defer cancel()
 	instruction := "Immediately return up to 25 likely words. No explanation. Exactly one line: WORDS: word, word, word"
@@ -387,6 +393,25 @@ func geminiSearchPrompt(b wordhunt.Board, maxWords int) string {
 		fmt.Sprintf("Find at most %d words. ", maxWords) +
 		"Start with high-confidence 3-5 letter words, then add longer words only when every transition is in the neighbor map. " +
 		"Never reuse an index in one word."
+}
+
+// gemmaFlight queues hosted Gemma calls per model. gemma-4-31b-it's tier-2
+// cap is 30 generateContent requests; a burst past that returns 429.
+var gemmaFlight sync.Map
+
+func acquireGemma(ctx context.Context, model string) (func(), error) {
+	n := int(envInt32("ARENA_GEMMA_MAX_INFLIGHT", 8, 0, 64))
+	if n == 0 {
+		return func() {}, nil
+	}
+	ch, _ := gemmaFlight.LoadOrStore(model, make(chan struct{}, n))
+	slot := ch.(chan struct{})
+	select {
+	case slot <- struct{}{}:
+		return func() { <-slot }, nil
+	case <-ctx.Done():
+		return func() {}, ctx.Err()
+	}
 }
 
 func moveContext(parent context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
