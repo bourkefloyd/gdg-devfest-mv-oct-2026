@@ -6,6 +6,7 @@ export type ArenaAction =
   | { type: "local-gateway"; status: LocalGatewayStatus; runId?: string }
   | { type: "connection"; connection: ConnectionState }
   | { type: "event"; event: NormalizedArenaEvent; source?: ArenaSource }
+  | { type: "events"; batch: Array<{ event: NormalizedArenaEvent; source?: ArenaSource }> }
   | { type: "cancelling" }
   | { type: "failure"; message: string }
   | { type: "reset" };
@@ -45,6 +46,8 @@ export function arenaReducer(state: ArenaState, action: ArenaAction): ArenaState
       return { ...initialArenaState, requestedCount: state.requestedCount };
     case "event":
       return reduceServerEvent(state, action.event, action.source ?? "cloud");
+    case "events":
+      return action.batch.reduce((next, item) => reduceServerEvent(next, item.event, item.source ?? "cloud"), state);
   }
 }
 
