@@ -24,10 +24,10 @@ type arenaProfile struct {
 func arenaProfiles() []arenaProfile {
 	gemma := env("ARENA_PROFILE_GEMMA_BASELINE_MODEL", "gemma-4-26b-a4b-it")
 	return []arenaProfile{
-		{Name: "Gemini agent", Percent: profilePercent("ARENA_PROFILE_GEMINI_AGENT_PERCENT", 10), Backend: "google-genai", ModelID: env("ARENA_PROFILE_GEMINI_AGENT_MODEL", "gemini-3.8-flash"), Strategy: "submit-words-agent"},
-		{Name: "Gemma agent (baseline)", Percent: profilePercent("ARENA_PROFILE_GEMMA_BASELINE_PERCENT", 30), Backend: "gemini-api-hosted-gemma", ModelID: gemma, Strategy: "baseline"},
-		{Name: "Gemma agent (diffusion)", Percent: profilePercent("ARENA_PROFILE_GEMMA_DIFFUSION_PERCENT", 30), Backend: "gemini-api-hosted-gemma", ModelID: env("ARENA_PROFILE_GEMMA_DIFFUSION_MODEL", gemma), Strategy: "diffusion"},
-		{Name: "Gemma agent (diffusion JEV)", Percent: profilePercent("ARENA_PROFILE_GEMMA_JEV_PERCENT", 30), Backend: "gemini-api-hosted-gemma", ModelID: env("ARENA_PROFILE_GEMMA_JEV_MODEL", gemma), Strategy: "diffusion-jev"},
+		{Name: "Gemini 3.8 Flash", Percent: profilePercent("ARENA_PROFILE_GEMINI_AGENT_PERCENT", 10), Backend: "google-genai", ModelID: env("ARENA_PROFILE_GEMINI_AGENT_MODEL", "gemini-3.8-flash"), Strategy: "submit-words-agent"},
+		{Name: "Gemma 4 26B A4B", Percent: profilePercent("ARENA_PROFILE_GEMMA_BASELINE_PERCENT", 30), Backend: "gemini-api-hosted-gemma", ModelID: gemma, Strategy: "baseline"},
+		{Name: "Gemma 4 31B diffusion (mock)", Percent: profilePercent("ARENA_PROFILE_GEMMA_DIFFUSION_PERCENT", 30), Backend: "gemini-api-hosted-gemma", ModelID: env("ARENA_PROFILE_GEMMA_DIFFUSION_MODEL", gemma), Strategy: "diffusion"},
+		{Name: "Gemma 4 31B diffusion JEV (mock)", Percent: profilePercent("ARENA_PROFILE_GEMMA_JEV_PERCENT", 30), Backend: "gemini-api-hosted-gemma", ModelID: env("ARENA_PROFILE_GEMMA_JEV_MODEL", gemma), Strategy: "diffusion-jev"},
 	}
 }
 
