@@ -2,10 +2,10 @@ import {
   Activity, AlertTriangle, CircleStop, Clock3, Gauge, LoaderCircle, Play, RotateCcw,
   Sparkles, Trophy, Wifi, WifiOff, X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { LOCAL_DIFFUSION_ORIGIN, cancelRun, connectRunEvents, createRun, probeLocalDiffusion } from "./api";
 import { arenaReducer, initialArenaState, isLocalSeat } from "./reducer";
-import type { ArenaGame, ArenaState } from "./types";
+import type { ArenaGame, ArenaSource, ArenaState, NormalizedArenaEvent } from "./types";
 
 const SWIPE_COLORS = ["#ff5e73", "#5eead4", "#facc15", "#c084fc", "#60a5fa", "#fb923c", "#f472b6", "#a3e635"];
 const PREVIEW_BOARD = "STARNETOLOIDMEPC".split("");
@@ -21,6 +21,28 @@ function App() {
   const closeStream = useRef<() => void>(() => undefined);
   const request = useRef<AbortController | null>(null);
   const autoStarted = useRef(false);
+  const queuedEvents = useRef<Array<{ event: NormalizedArenaEvent; source: ArenaSource }>>([]);
+  const eventFrame = useRef(0);
+
+  const flushEvents = useCallback(() => {
+    eventFrame.current = 0;
+    const batch = queuedEvents.current;
+    if (!batch.length) return;
+    queuedEvents.current = [];
+    dispatch({ type: "events", batch });
+  }, []);
+
+  const enqueueEvent = useCallback((event: NormalizedArenaEvent, source: ArenaSource) => {
+    queuedEvents.current.push({ event, source });
+    if (!eventFrame.current) eventFrame.current = requestAnimationFrame(flushEvents);
+  }, [flushEvents]);
+
+  const dropQueuedEvents = useCallback(() => {
+    queuedEvents.current = [];
+    if (!eventFrame.current) return;
+    cancelAnimationFrame(eventFrame.current);
+    eventFrame.current = 0;
+  }, []);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 500);
@@ -30,7 +52,8 @@ function App() {
   useEffect(() => () => {
     request.current?.abort();
     closeStream.current();
-  }, []);
+    dropQueuedEvents();
+  }, [dropQueuedEvents]);
 
   useEffect(() => {
     if (state.status === "finished" || state.status === "error") closeStream.current();
@@ -39,6 +62,7 @@ function App() {
   const startRun = useCallback(async (freshBoard = false) => {
     request.current?.abort();
     closeStream.current();
+    dropQueuedEvents();
     const controller = new AbortController();
     request.current = controller;
     const stops: { cloud: () => void; local: () => void } = { cloud: () => undefined, local: () => undefined };
@@ -61,7 +85,7 @@ function App() {
       dispatch({ type: "created", runId: result.run_id });
       stops.cloud = connectRunEvents(
         result.run_id,
-        (event) => dispatch({ type: "event", event, source: "cloud" }),
+        (event) => enqueueEvent(event, "cloud"),
         () => dispatch({ type: "connection", connection: "live" }),
         () => dispatch({ type: "connection", connection: "reconnecting" }),
       );
@@ -79,7 +103,7 @@ function App() {
         let cancelled = false;
         const stopLocal = connectRunEvents(
           local.run_id,
-          (event) => dispatch({ type: "event", event, source: "local" }),
+          (event) => enqueueEvent(event, "local"),
           () => { opened = true; },
           () => { if (!cancelled && !opened) dispatch({ type: "local-gateway", status: "offline" }); },
           LOCAL_DIFFUSION_ORIGIN,
@@ -94,7 +118,7 @@ function App() {
     } catch (error) {
       if (!controller.signal.aborted) dispatch({ type: "failure", message: error instanceof Error ? error.message : "Unable to start arena" });
     }
-  }, [count, duration, seedInput]);
+  }, [count, dropQueuedEvents, duration, enqueueEvent, seedInput]);
 
   useEffect(() => {
     if (autoStarted.current || new URLSearchParams(window.location.search).get("autostart") !== "24") return;
@@ -162,11 +186,7 @@ function App() {
               <Play fill="currentColor" size={18} /> Load test
             </button>
           )}
-<<<<<<< HEAD
-          <span className="cap-note">Gemini 3.8 Flash · Gemma 4 26B A4B · DiffusionGemma on this Mac when :8787 is up</span>
-=======
-          <span className="cap-note">50% Gemini 3.8 Flash · 50% Gemma 4 26B A4B</span>
->>>>>>> 2d0096e (fix: serve Gemini and Gemma 26B with a per-minute cap)
+          <span className="cap-note">50% Gemini 3.8 Flash · 50% Gemma 4 26B A4B · DiffusionGemma on this Mac when :8787 is up</span>
         </div>
       </section>
 
@@ -193,7 +213,7 @@ function App() {
 
         <div className="board-grid" aria-live="polite">
           {visibleGames.map((game, index) => (
-            <GameBoard key={`${game.id}-${index}`} game={game} now={now} runStartedAt={state.startedAt} preview={state.games.length === 0} />
+            <GameBoard key={`${game.id}-${index}`} game={game} now={game.status === "running" ? now : 0} runStartedAt={game.status === "running" ? state.startedAt : undefined} preview={state.games.length === 0} />
           ))}
         </div>
       </section>
@@ -265,7 +285,7 @@ function Connection({ state, compact = false }: { state: ArenaState; compact?: b
   );
 }
 
-function GameBoard({ game, now, runStartedAt, preview }: { game: ArenaGame; now: number; runStartedAt?: number; preview: boolean }) {
+const GameBoard = memo(function GameBoard({ game, now, runStartedAt, preview }: { game: ArenaGame; now: number; runStartedAt?: number; preview: boolean }) {
   const board = game.board.length === 16 ? game.board : preview ? PREVIEW_BOARD : Array(16).fill("");
   const active = new Set(game.swipe.path);
   const color = game.swipe.color ?? SWIPE_COLORS[game.ordinal % SWIPE_COLORS.length];
@@ -306,7 +326,7 @@ function GameBoard({ game, now, runStartedAt, preview }: { game: ArenaGame; now:
       {game.error && <div className="game-error"><AlertTriangle size={11} /> {game.error}</div>}
     </article>
   );
-}
+});
 
 function Results({ state, onClose, onRestart, onNewBoard }: { state: ArenaState; onClose: () => void; onRestart: () => void; onNewBoard: () => void }) {
   const [tab, setTab] = useState<"complete" | "incomplete" | "all">("complete");

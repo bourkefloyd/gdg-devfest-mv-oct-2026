@@ -155,6 +155,18 @@ describe("arena gateway events", () => {
     expect(state.status).toBe("finished");
     expect(state.message).toBeUndefined();
   });
+
+  it("applies a frame of events together", () => {
+    let state = arenaReducer(initialArenaState, { type: "start", count: 1 });
+    state = arenaReducer(state, {
+      type: "events",
+      batch: [
+        { event: event({ type: "game_started", game: { id: "run-001", index: 0, player_name: "Turbo Otter 01", tiles: "ABCDEFGHIJKLMNOP" } }) },
+        { event: event({ type: "word", word_event: { game_id: "run-001", word: "ABC", path: [0, 1, 2], points: 100, total: 100 } }) },
+      ],
+    });
+    expect(state.games[0]).toMatchObject({ name: "Turbo Otter 01", score: 100, words: 1, currentWord: "ABC" });
+  });
 });
 
 function event(value: Record<string, unknown>) {
