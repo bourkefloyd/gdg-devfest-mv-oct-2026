@@ -12,6 +12,15 @@ Judging begins at **5:15 PM PT**.
 4. Scalability and architecture
 5. Agentic innovation (optional)
 
+## Current status
+
+- **Live:** https://wordrust-958584846348.us-central1.run.app/
+- **Gemma minimal-thinking fix** (`a7a5000`) is on `main` and deploying.
+- **Diffusion and diffusion JEV** are mock profiles running on Gemma 4 31B.
+- **Real DiffusionGemma 26B** runs locally via MLX (about 1.9 s a move); the `localhost:8787` path is in progress.
+
+See [architecture](architecture.md) and [load test results](load-test-results.md).
+
 ## Team tracks
 
 - Track A — Game core (`track-a`)
@@ -38,3 +47,6 @@ Judging begins at **5:15 PM PT**.
 - [Project context](project-context.md)
 - [Hack plan](hack-plan.md)
 - [Local setup notes](local-setup.md)
+- [Architecture](architecture.md)
+- [Load test results](load-test-results.md)
+- [Serving review](serving-review.md)

@@ -13,11 +13,16 @@ Build, Secure, and Scale
 Rigor is expected throughout (confirmed by Bourke): tests, threat model, reliability targets, measured load-test results.
 
 ## Deadline
-- Judging starts 5:15 PM local (assumed US Pacific, 00:15 UTC)
+- No 4:45 PM code freeze
+- Build until 6:15 PM PT (01:15 UTC), per Bourke on 2026-10-02
 
 ## Direction
 - Demo: models play Word Hunt (Boggle-style 4x4 grid; Go was the earlier idea) through a hybrid Gemma + Gemini gateway, then load test with many concurrent games
 - JEPA-style model: stretch goal only
+
+## GCP
+- Project: gen-lang-client-0189911611 (wordrust-hack), region us-central1
+- Team name: Word Rust (assumed from project name)
 
 ## Codebase
 - Working repo (now public): [bourkefloyd/oxidizinggemma](https://github.com/bourkefloyd/oxidizinggemma), copied from jorgeajimenez/oxidizinggemma
