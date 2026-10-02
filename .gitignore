@@ -23,6 +23,9 @@ arena-web/
 .env.*
 !.env.example
 
+# Optional local DiffusionGemma venv (Apple Silicon). Weights stay in the HF cache.
+local-model/.venv/
+
 # Context exports and reference folders
 PROJECT_CONTEXT.md
 FULL_PROJECT_CONTEXT.md
