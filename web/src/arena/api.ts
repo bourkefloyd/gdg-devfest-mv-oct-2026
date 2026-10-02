@@ -41,11 +41,18 @@ export async function createRun(
   seed?: number,
   signal?: AbortSignal,
   origin = API_BASE,
+  tiles?: string,
 ): Promise<RunCreatedResponse> {
   const response = await fetch(arenaURL(origin, "/api/arena/runs"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ count, player_mix: playerMix, duration_s: durationSeconds, ...(seed === undefined ? {} : { seed }) }),
+    body: JSON.stringify({
+      count,
+      player_mix: playerMix,
+      duration_s: durationSeconds,
+      ...(seed === undefined ? {} : { seed }),
+      ...(tiles ? { tiles } : {}),
+    }),
     signal,
   });
   if (!response.ok) throw new Error(await apiError(response, "Unable to start arena run"));

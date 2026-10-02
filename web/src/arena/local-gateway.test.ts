@@ -19,15 +19,15 @@ describe("local diffusion gateway", () => {
     }));
   });
 
-  it("posts the same body to the local gateway", async () => {
-    const fetchMock = vi.fn(async () => Response.json({ run_id: "local", seed: 7, tiles: "A".repeat(16) }));
+  it("posts the cloud board to the local gateway", async () => {
+    const fetchMock = vi.fn(async () => Response.json({ run_id: "local", seed: 7, tiles: "ABCDEFGHIJKLMNOP" }));
     vi.stubGlobal("fetch", fetchMock);
 
-    await createRun(4, "mixed", 10, 7, undefined, LOCAL_DIFFUSION_ORIGIN);
+    await createRun(4, "mixed", 30, 7, undefined, LOCAL_DIFFUSION_ORIGIN, "ABCDEFGHIJKLMNOP");
 
     expect(fetchMock).toHaveBeenCalledWith(`${LOCAL_DIFFUSION_ORIGIN}/api/arena/runs`, expect.objectContaining({
       method: "POST",
-      body: JSON.stringify({ count: 4, player_mix: "mixed", duration_s: 10, seed: 7 }),
+      body: JSON.stringify({ count: 4, player_mix: "mixed", duration_s: 30, seed: 7, tiles: "ABCDEFGHIJKLMNOP" }),
     }));
   });
 

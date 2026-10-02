@@ -96,7 +96,7 @@ function App() {
         return;
       }
       try {
-        const local = await createRun(safeCount, "mixed", duration, requestedSeed ?? result.seed, controller.signal, LOCAL_DIFFUSION_ORIGIN);
+        const local = await createRun(safeCount, "mixed", duration, result.seed, controller.signal, LOCAL_DIFFUSION_ORIGIN, result.tiles);
         if (controller.signal.aborted) return;
         dispatch({ type: "local-gateway", status: "live", runId: local.run_id });
         let opened = false;
@@ -372,7 +372,7 @@ function Results({ state, onClose, onRestart, onNewBoard }: { state: ArenaState;
             <div className={`leader-row ${toneClass(tone)}`} key={game.id}>
               <div><b>{index + 1}</b><span className="agent-dot" style={{ background: color }} /><strong>{game.name}</strong></div>
               <div><strong>{seatGroup(game)}</strong><small>{game.model} · {game.backend}</small></div>
-              <strong>{game.score.toLocaleString()} / {game.perfectScore.toLocaleString()}</strong><span>{game.words}</span><span>{game.error ? "error" : formatLatency(game.timeToScoreMs ?? game.latencyMs ?? 0)} · {game.retries}r</span>
+              <strong>{game.score.toLocaleString()} / {game.perfectScore.toLocaleString()}</strong><span>{game.words}</span><span>{game.error ? "error" : formatLatency(game.timeToScoreMs || game.latencyMs || 0)} · {game.retries}r</span>
             </div>
             );
           })}
