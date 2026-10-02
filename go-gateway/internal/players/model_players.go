@@ -279,6 +279,10 @@ func (p *HostedGemmaPlayer) Play(ctx context.Context, b wordhunt.Board, deadline
 		&genai.GenerateContentConfig{
 			Temperature:     ptr(float32(0.2)),
 			MaxOutputTokens: 1024,
+			// Gemma 4 thinks by default and spends the output budget on thought
+			// tokens, so the answer never arrives before the move deadline.
+			// thinkingBudget is rejected; MINIMAL is the supported switch.
+			ThinkingConfig: &genai.ThinkingConfig{ThinkingLevel: genai.ThinkingLevelMinimal},
 		},
 	)
 	if err != nil {

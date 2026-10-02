@@ -210,6 +210,40 @@ func TestGeminiPlayerFakeServer(t *testing.T) {
 	}
 }
 
+func TestHostedGemmaDisablesThinking(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		if !strings.Contains(string(body), `"thinkingLevel":"MINIMAL"`) {
+			t.Errorf("request lacks minimal thinking: %s", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"candidates":[{"content":{"role":"model","parts":[{"text":"","thought":true},{"text":"WORDS: cat, tone"}]},"finishReason":"STOP"}]}`)
+	}))
+	defer server.Close()
+	client, err := genai.NewClient(context.Background(), &genai.ClientConfig{
+		APIKey:  "fake-key",
+		Backend: genai.BackendGeminiAPI,
+		HTTPOptions: genai.HTTPOptions{
+			BaseURL: server.URL,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	board := wordhunt.Board{Tiles: [16]byte{'c', 'a', 't'}}
+	result, err := NewHostedGemmaPlayer(client, "gemma-4-26b-a4b-it").
+		Play(context.Background(), board, time.Now().Add(10*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Claims) != 2 || result.Claims[0].Word != "cat" || result.Claims[1].Word != "tone" {
+		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
 func TestHostedGemmaLive(t *testing.T) {
 	if os.Getenv("LIVE_HOSTED_GEMMA") != "1" {
 		t.Skip("set LIVE_HOSTED_GEMMA=1 to call hosted Gemma")
