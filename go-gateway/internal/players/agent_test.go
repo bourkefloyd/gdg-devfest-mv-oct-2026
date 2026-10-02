@@ -9,6 +9,21 @@ import (
 	"go-gateway/internal/wordhunt"
 )
 
+func TestGeminiMaxTurns(t *testing.T) {
+	t.Setenv("ARENA_GEMINI_MAX_TURNS", "")
+	if geminiMaxTurns() != 4 {
+		t.Fatalf("default turns = %d", geminiMaxTurns())
+	}
+	t.Setenv("ARENA_GEMINI_MAX_TURNS", "1")
+	if geminiMaxTurns() != 1 {
+		t.Fatalf("turns = %d", geminiMaxTurns())
+	}
+	t.Setenv("ARENA_GEMINI_MAX_TURNS", "0")
+	if geminiMaxTurns() != 4 {
+		t.Fatalf("invalid turns = %d", geminiMaxTurns())
+	}
+}
+
 func TestWordsArgument(t *testing.T) {
 	words, err := wordsArgument(map[string]any{"words": []any{"cat", "tone"}})
 	if err != nil {

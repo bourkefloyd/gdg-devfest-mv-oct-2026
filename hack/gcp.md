@@ -227,7 +227,7 @@ gcloud run deploy "$SERVICE" \
   --image="$IMAGE" \
   --service-account="wordrust-run@${PROJECT_ID}.iam.gserviceaccount.com" \
   --set-secrets="GATEWAY_API_KEYS=gateway-api-keys:latest,GEMINI_API_KEY=gemini-api-key:latest" \
-  --set-env-vars="HOST=0.0.0.0,PLAYERS=real,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=global,GEMINI_PLAYER_MODEL=gemini-3.8-flash,GEMINI_FALLBACK_MODEL=gemini-3.8-flash,GEMINI_COMMENTATOR_MODEL=gemini-3.8-flash,GEMINI_API_PLAYER_MODEL=gemini-3.8-flash,GEMINI_API_FALLBACK_MODEL=gemini-3.8-flash,MAX_ACTIVE_GAMES=2000,ARENA_MAX_REAL_GAMES=12,ARENA_PROFILE_GEMINI_AGENT_PERCENT=50,ARENA_PROFILE_GEMINI_AGENT_MODEL=gemini-3.8-flash,ARENA_PROFILE_GEMMA_BASELINE_PERCENT=50,ARENA_PROFILE_GEMMA_BASELINE_MODEL=gemma-4-26b-a4b-it,ARENA_GEMMA_RPM=28,ARENA_GEMINI_MAX_INFLIGHT=8" \
+  --set-env-vars="HOST=0.0.0.0,PLAYERS=real,GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=${PROJECT_ID},GOOGLE_CLOUD_LOCATION=global,GEMINI_PLAYER_MODEL=gemini-3.8-flash,GEMINI_FALLBACK_MODEL=gemini-3.8-flash,GEMINI_COMMENTATOR_MODEL=gemini-3.8-flash,GEMINI_API_PLAYER_MODEL=gemini-3.8-flash,GEMINI_API_FALLBACK_MODEL=gemini-3.8-flash,MAX_ACTIVE_GAMES=2000,ARENA_MAX_REAL_GAMES=12,ARENA_PROFILE_GEMINI_AGENT_PERCENT=50,ARENA_PROFILE_GEMINI_AGENT_MODEL=gemini-3.8-flash,ARENA_PROFILE_GEMMA_BASELINE_PERCENT=50,ARENA_PROFILE_GEMMA_BASELINE_MODEL=gemma-4-26b-a4b-it,ARENA_GEMMA_RPM=28,ARENA_GEMINI_MAX_INFLIGHT=8,ARENA_GEMINI_MAX_TURNS=1" \
   --port=8080 \
   --cpu=4 \
   --memory=2Gi \
@@ -249,7 +249,9 @@ Cloud Run serves two arena profiles: Gemini 3.8 Flash and Gemma 4 26B A4B,
 `ARENA_PROFILE_GEMMA_BASELINE_PERCENT`). Diffusion runs in the browser against
 the local gateway, not as a Cloud Run profile. `ARENA_GEMMA_RPM` (default 28)
 keeps each Gemini-API Gemma model under its 30 requests/minute cap.
-`ARENA_GEMINI_MAX_INFLIGHT` (default 8) queues Gemini agent calls.
+`ARENA_GEMINI_MAX_INFLIGHT` (default 8) queues Gemini agent attempts.
+`ARENA_GEMINI_MAX_TURNS` (code default 4; this deploy sets 1) caps
+submit_words rounds per attempt, so one in-flight slot is one request.
 `ARENA_GEMMA_VERTEX` defaults off. Set it to `true` only to send the 26B
 baseline through Vertex model `gemma-4-26b-a4b-it-maas`, which then uses
 `ARENA_VERTEX_GEMMA_MAX_INFLIGHT` (default 24) instead of the Gemini API

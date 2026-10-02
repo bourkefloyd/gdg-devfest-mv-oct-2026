@@ -475,7 +475,8 @@ func AcquireVertexGemma(ctx context.Context) (func(), error) {
 	return acquireSlots(ctx, &vertexGemmaSlots, "vertex-gemma", n)
 }
 
-// AcquireGemini bounds concurrent Gemini agent calls.
+// AcquireGemini bounds concurrent Gemini agent attempts. With
+// ARENA_GEMINI_MAX_TURNS=1 that is one generateContent call per slot.
 func AcquireGemini(ctx context.Context) (func(), error) {
 	n := int(envInt32("ARENA_GEMINI_MAX_INFLIGHT", 8, 0, 64))
 	return acquireSlots(ctx, &geminiSlots, "gemini", n)

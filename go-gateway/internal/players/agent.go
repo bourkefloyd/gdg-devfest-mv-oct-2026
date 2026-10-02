@@ -39,6 +39,13 @@ func NewGeminiAgent(client *genai.Client, model string, dict *wordhunt.Dict) *Ge
 
 func (p *GeminiAgent) Name() string { return "Gemini agent" }
 
+// geminiMaxTurns is how many submit_words rounds one attempt may make.
+// The default keeps the four-turn chat. Deploy sets ARENA_GEMINI_MAX_TURNS=1
+// so one in-flight slot is one generateContent call, matching Gemma.
+func geminiMaxTurns() int {
+	return int(envInt32("ARENA_GEMINI_MAX_TURNS", 4, 1, 8))
+}
+
 func (p *GeminiAgent) Play(ctx context.Context, b wordhunt.Board, deadline time.Time) (Result, error) {
 	start := time.Now()
 	if p.Client == nil {
@@ -84,7 +91,8 @@ func (p *GeminiAgent) Play(ctx context.Context, b wordhunt.Board, deadline time.
 
 	accepted := map[string]Claim{}
 	var raw strings.Builder
-	for turn := 0; turn < 4; turn++ {
+	maxTurns := geminiMaxTurns()
+	for turn := 0; turn < maxTurns; turn++ {
 		calls := response.FunctionCalls()
 		if len(calls) == 0 {
 			if turn > 0 {
@@ -130,7 +138,7 @@ func (p *GeminiAgent) Play(ctx context.Context, b wordhunt.Board, deadline time.
 			})
 		}
 		fmt.Fprintf(&raw, "turn %d: %d submitted, %d accepted\n", turn+1, len(words), len(accepted))
-		if turn == 3 {
+		if turn == maxTurns-1 {
 			break
 		}
 		response, err = chat.SendMessage(ctx, *genai.NewPartFromFunctionResponse(
