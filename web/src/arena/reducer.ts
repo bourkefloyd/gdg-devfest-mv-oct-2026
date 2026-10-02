@@ -224,6 +224,7 @@ function hydrateGame(game: ArenaGame, payload: Record<string, unknown>, source: 
     timeToScoreMs: number(payload.time_to_score_ms) ?? game.timeToScoreMs,
     perfectScore: number(payload.perfect_score) ?? game.perfectScore,
     profile: source === "local" ? (localLabel ?? game.profile) : (payloadProfile ?? game.profile),
+    profileId: text(payload.profile_id ?? payload.profileId) ?? game.profileId,
     retries: number(payload.retries) ?? game.retries,
     error: text(payload.error) ?? game.error,
     elapsedMs: number(payload.elapsed_ms ?? payload.elapsed) ?? game.elapsedMs,
@@ -241,6 +242,33 @@ function rememberLocalLabel(state: ArenaState, source: ArenaSource): ArenaState 
 
 export function isLocalSeat(game: ArenaGame) {
   return game.id.startsWith("local:") || game.id.startsWith("local-index:");
+}
+
+export type ModelTone = "gemini" | "gemma" | "gemma-diffusion" | "gemma-diffusion-jev" | "diffusiongemma-local";
+
+export const MODEL_TONE_COLOR: Record<ModelTone, string> = {
+  gemini: "#60a5fa",
+  gemma: "#c084fc",
+  "gemma-diffusion": "#facc15",
+  "gemma-diffusion-jev": "#fb923c",
+  "diffusiongemma-local": "#5eead4",
+};
+
+export function modelTone(game: Pick<ArenaGame, "id" | "name" | "model" | "profile" | "profileId">): ModelTone | undefined {
+  const id = (game.profileId ?? "").trim().toLowerCase();
+  if (id === "diffusiongemma-local" || isLocalSeat(game as ArenaGame)) return "diffusiongemma-local";
+  if (id === "gemma-diffusion-jev" || id === "diffusion-jev") return "gemma-diffusion-jev";
+  if (id === "gemma-diffusion" || id === "diffusiongemma" || id === "diffusion") return "gemma-diffusion";
+  if (id === "gemini" || id.startsWith("gemini-")) return "gemini";
+  if (id === "gemma" || (id.startsWith("gemma-") && !id.includes("diffusion"))) return "gemma";
+
+  const hay = `${game.profile ?? ""} ${game.model ?? ""} ${game.name ?? ""}`.toLowerCase();
+  if (hay.includes("diffusiongemma-local") || (hay.includes("diffusion") && hay.includes("local"))) return "diffusiongemma-local";
+  if (hay.includes("jev")) return "gemma-diffusion-jev";
+  if (hay.includes("diffusion")) return "gemma-diffusion";
+  if (hay.includes("gemini")) return "gemini";
+  if (hay.includes("gemma")) return "gemma";
+  return undefined;
 }
 
 function localSeatId(payload: Record<string, unknown>, fallback?: number): string | undefined {
